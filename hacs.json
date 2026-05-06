@@ -1,0 +1,8 @@
+{
+  "name": "FusionSolar Card",
+  "description": "Animated Lovelace dashboard card for Huawei SUN2000 inverters via the FusionSolar / Huawei Solar integration. Features an animated SVG flow diagram, arc gauges, Chart.js energy history, and collapsible detail sections for all inverter, grid, production and diagnostic entities.",
+  "render_readme": true,
+  "filename": "fusionsolar-card.js",
+  "content_in_root": true,
+  "homeassistant": "2023.9.0"
+}
