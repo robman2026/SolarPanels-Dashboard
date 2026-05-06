@@ -19,7 +19,7 @@
  *       Self-Consumption Ratios · Diagnostics
  */
 
-const CARD_VERSION = '1.2.0';
+const CARD_VERSION = '1.3.0';
 
 // ── LitElement bootstrap (same pattern as all robman2026 cards) ──────────────
 const LitElement = Object.getPrototypeOf(customElements.get('ha-panel-lovelace'));
@@ -121,14 +121,20 @@ class FusionSolarCard extends LitElement {
       hass:          {},
       _config:       { state: true },
       _openSections: { state: true },
-      _chartRange:   { state: true },
+      _range:        { state: true },   // 'day' | 'month' | 'year' | 'lifetime'
+      _offset:       { state: true },   // date offset: 0=current, -1=previous, etc.
+      _statsData:    { state: true },   // { labels, solar, cons, exp, prodTotal, prodCons, prodGrid, consTotal, consPV, consGrid, unit }
+      _statsLoading: { state: true },
     };
   }
 
   constructor() {
     super();
     this._openSections = {};
-    this._chartRange   = 'day';
+    this._range        = 'day';
+    this._offset       = 0;
+    this._statsData    = null;
+    this._statsLoading = false;
     this._chart        = null;
   }
 
@@ -155,20 +161,20 @@ class FusionSolarCard extends LitElement {
     return document.createElement('fusionsolar-card-editor');
   }
 
-  getCardSize() { return 8; }
+  getCardSize() { return 10; }
 
-  // ── Chart lifecycle ────────────────────────────────────────────────────────
+  // ── Lifecycle ─────────────────────────────────────────────────────────────
   firstUpdated() {
-    loadChartJs(() => this._buildChart());
+    loadChartJs(() => this._fetchStats());
   }
 
   updated(changed) {
-    if (changed.has('_chartRange') || changed.has('_config')) {
-      // Range or config changed — full rebuild needed
+    if (changed.has('_range') || changed.has('_offset') || changed.has('_config')) {
+      loadChartJs(() => this._fetchStats());
+    } else if (changed.has('_statsData')) {
       loadChartJs(() => this._buildChart());
     } else if (changed.has('hass') && this._chart) {
-      // Only entity values changed — patch in-place, no flicker
-      loadChartJs(() => this._patchChart());
+      // Live power values changed — patch arc gauges only, no chart rebuild
     }
   }
 
@@ -177,108 +183,311 @@ class FusionSolarCard extends LitElement {
     if (this._chart) { this._chart.destroy(); this._chart = null; }
   }
 
-  // Patch existing chart data without destroying/recreating — prevents flicker
-  _patchChart() {
-    if (!this._chart) { this._buildChart(); return; }
-    const { solar, cons, exp } = this._getChartData();
-    this._chart.data.datasets[0].data = solar;
-    this._chart.data.datasets[1].data = cons;
-    this._chart.data.datasets[2].data = exp;
-    this._chart.update('none'); // 'none' = skip animation on data patch
+  // ── Date label for current range + offset ─────────────────────────────────
+  _dateLabel() {
+    const now = new Date();
+    const r = this._range;
+    const o = this._offset;
+    if (r === 'day') {
+      const d = new Date(now); d.setDate(d.getDate() + o);
+      return d.toLocaleDateString(undefined, { day:'2-digit', month:'2-digit', year:'numeric' });
+    }
+    if (r === 'month') {
+      const d = new Date(now.getFullYear(), now.getMonth() + o, 1);
+      return d.toLocaleDateString(undefined, { month:'long', year:'numeric' });
+    }
+    if (r === 'year') {
+      return String(now.getFullYear() + o);
+    }
+    return 'All time';
   }
 
-  _getChartData() {
-    const cfg  = this._config;
-    const hass = this.hass;
-    const r    = this._chartRange;
-    let labels, solar, cons, exp;
+  // ── Date range for statistics query ───────────────────────────────────────
+  _getDateRange() {
+    const now   = new Date();
+    const r     = this._range;
+    const o     = this._offset;
+    let start, end;
 
     if (r === 'day') {
-      // Day view: we only have running kWh totals from FusionSolar, not hourly history.
-      // We show the current live kW power as a single honest bar so the scale is correct.
-      // Labels = today summary periods
-      labels = ['Live now', 'Today so far'];
-
-      const liveSolar = sn(hass, cfg.solar_power_entity,  0);
-      const liveCons  = sn(hass, cfg.house_power_entity,  0);
-      const liveExp   = sn(hass, cfg.grid_power_entity,   0);
-
-      const genToday  = sn(hass, cfg.production_today_entity,  0);
-      const consToday = sn(hass, cfg.consumption_today_entity, 0);
-      const expToday  = sn(hass, cfg.export_today_entity,      0);
-
-      // First point = live kW, second point = today's kWh total
-      // Both datasets share the same axis — kW live / kWh today side by side
-      solar = [liveSolar, genToday];
-      cons  = [liveCons,  consToday];
-      exp   = [liveExp,   expToday];
-
-    } else if (r === 'week') {
-      labels = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-      const w  = sn(hass, cfg.production_week_entity, 0);
-      solar    = [0.13,0.16,0.09,0.15,0.17,0.18,0.12].map(v => +(v * w).toFixed(2));
-      const cw = sn(hass, cfg.consumption_week_entity, 0);
-      cons     = [0.14,0.17,0.12,0.15,0.15,0.16,0.11].map(v => +(v * cw).toFixed(2));
-      const ew = sn(hass, cfg.export_week_entity, 0);
-      exp      = [0.12,0.16,0.06,0.14,0.18,0.20,0.14].map(v => +(v * ew).toFixed(2));
+      start = new Date(now); start.setDate(start.getDate() + o);
+      start.setHours(0,0,0,0);
+      end = new Date(start); end.setHours(23,59,59,999);
+    } else if (r === 'month') {
+      start = new Date(now.getFullYear(), now.getMonth() + o, 1, 0, 0, 0, 0);
+      end   = new Date(now.getFullYear(), now.getMonth() + o + 1, 0, 23, 59, 59, 999);
+    } else if (r === 'year') {
+      const y = now.getFullYear() + o;
+      start = new Date(y, 0, 1, 0, 0, 0, 0);
+      end   = new Date(y, 11, 31, 23, 59, 59, 999);
     } else {
-      labels = ['Week 1','Week 2','Week 3','Week 4'];
-      const m  = sn(hass, cfg.production_month_entity, 0);
-      solar    = [0.22,0.28,0.21,0.29].map(v => +(v * m).toFixed(2));
-      const cm = sn(hass, cfg.consumption_month_entity, 0);
-      cons     = [0.23,0.26,0.23,0.28].map(v => +(v * cm).toFixed(2));
-      const em = sn(hass, cfg.export_month_entity, 0);
-      exp      = [0.20,0.30,0.18,0.32].map(v => +(v * em).toFixed(2));
+      // lifetime — from 2000 to now
+      start = new Date(2000, 0, 1);
+      end   = new Date();
     }
-    return { labels, solar, cons, exp, r };
+    return { start, end };
   }
 
+  // ── Fetch statistics from HA recorder ────────────────────────────────────
+  async _fetchStats() {
+    if (!this.hass || !this._config) return;
+    const cfg = this._config;
+
+    // Entities we need stats for
+    const entities = [
+      cfg.solar_power_entity,            // live kW
+      cfg.house_power_entity,
+      cfg.grid_power_entity,
+      cfg.panel_production_power_entity || cfg.solar_power_entity,
+      cfg.production_today_entity,       // kWh totals
+      cfg.consumption_today_entity,
+      cfg.export_today_entity,
+      cfg.production_month_entity,
+      cfg.consumption_month_entity,
+      cfg.export_month_entity,
+      cfg.production_year_entity || cfg.panel_production_year_entity,
+      cfg.consumption_year_entity || cfg.house_load_year_entity,
+      cfg.export_year_entity || cfg.grid_injection_year_entity,
+      cfg.panel_production_lifetime_entity,
+      cfg.house_load_lifetime_entity,
+      cfg.grid_injection_lifetime_entity,
+      cfg.panel_production_consumption_today_entity,
+      cfg.panel_production_consumption_month_entity,
+      cfg.panel_production_consumption_year_entity,
+      cfg.panel_production_consumption_lifetime_entity,
+      cfg.grid_consumption_today_entity,
+      cfg.grid_consumption_month_entity,
+      cfg.grid_consumption_year_entity,
+      cfg.grid_consumption_lifetime_entity,
+    ].filter(Boolean).filter((v,i,a) => a.indexOf(v) === i); // dedupe
+
+    const r = this._range;
+    const { start, end } = this._getDateRange();
+
+    // For lifetime — use current entity states directly, no API needed
+    if (r === 'lifetime') {
+      const sn = (id) => { if (!id||!this.hass) return 0; const e=this.hass.states[id]; return e?parseFloat(e.state)||0:0; };
+      const prodTotal = sn(cfg.panel_production_lifetime_entity);
+      const prodCons  = sn(cfg.panel_production_consumption_lifetime_entity);
+      const consTotal = sn(cfg.house_load_lifetime_entity);
+      const consGrid  = sn(cfg.grid_consumption_lifetime_entity);
+      const prodGrid  = prodTotal > 0 ? Math.max(0, prodTotal - prodCons) : sn(cfg.grid_injection_lifetime_entity);
+      const consPV    = prodCons;
+      this._statsData = this._buildLifetimeData(sn, cfg, { prodTotal, prodCons, prodGrid, consTotal, consPV, consGrid });
+      return;
+    }
+
+    // For day — use recorder statistics_during_period for hourly breakdown
+    // For month — daily breakdown; for year — monthly breakdown
+    const period = r === 'day' ? 'hour' : r === 'month' ? 'day' : 'month';
+
+    // Stat entities: prefer long-term statistics (energy sensors)
+    const statIds = [
+      cfg.production_today_entity,
+      cfg.consumption_today_entity,
+      cfg.export_today_entity,
+      cfg.panel_production_consumption_today_entity,
+      cfg.grid_consumption_today_entity,
+    ].filter(Boolean).filter((v,i,a) => a.indexOf(v) === i);
+
+    if (!statIds.length) {
+      this._statsData = null;
+      return;
+    }
+
+    this._statsLoading = true;
+    try {
+      const result = await this.hass.callWS({
+        type: 'recorder/statistics_during_period',
+        start_time: start.toISOString(),
+        end_time:   end.toISOString(),
+        period,
+        statistic_ids: statIds,
+        types: ['change', 'state'],
+      });
+
+      this._statsData = this._processStats(result, r, start, end, cfg);
+    } catch(e) {
+      console.warn('[fusionsolar-card] Stats fetch failed, falling back to entity states:', e);
+      this._statsData = this._fallbackData(cfg, r);
+    }
+    this._statsLoading = false;
+  }
+
+  // ── Process recorder statistics into chart + donut data ───────────────────
+  _processStats(result, r, start, end, cfg) {
+    const CIRC = 219.9;
+
+    const getChanges = (entityId) => {
+      if (!entityId || !result[entityId]) return [];
+      return result[entityId].map(s => Math.max(0, s.change ?? (s.state ?? 0)));
+    };
+
+    const solar   = getChanges(cfg.production_today_entity);
+    const cons    = getChanges(cfg.consumption_today_entity);
+    const exp     = getChanges(cfg.export_today_entity);
+    const selfCons= getChanges(cfg.panel_production_consumption_today_entity);
+    const gridCons= getChanges(cfg.grid_consumption_today_entity);
+
+    // Build time labels
+    let labels;
+    if (r === 'day') {
+      labels = Array.from({length:24}, (_,i) => String(i).padStart(2,'0')+'h');
+      // Pad arrays to 24 entries
+      const pad = (arr) => { const a=[...arr]; while(a.length<24) a.push(0); return a.slice(0,24); };
+      return {
+        labels, r,
+        solar:  pad(solar).map(v=>+v.toFixed(2)),
+        cons:   pad(cons).map(v=>+v.toFixed(2)),
+        exp:    pad(exp).map(v=>+v.toFixed(2)),
+        chartType: 'line', yUnit: 'kWh',
+        ...this._donutDataFromArrays(solar, selfCons, cons, gridCons, 'kWh'),
+      };
+    }
+
+    if (r === 'month') {
+      // day labels 01–31
+      const days = Math.round((end - start) / 86400000) + 1;
+      labels = Array.from({length: days}, (_,i) => String(i+1).padStart(2,'0'));
+      const pad = (arr) => { const a=[...arr]; while(a.length<days) a.push(0); return a.slice(0,days); };
+      return {
+        labels, r,
+        solar: pad(solar).map(v=>+v.toFixed(2)),
+        cons:  pad(cons).map(v=>+v.toFixed(2)),
+        exp:   pad(exp).map(v=>+v.toFixed(2)),
+        chartType: 'bar', yUnit: 'kWh',
+        ...this._donutDataFromArrays(solar, selfCons, cons, gridCons, 'kWh'),
+      };
+    }
+
+    // year — monthly labels
+    labels = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const pad12 = (arr) => { const a=[...arr]; while(a.length<12) a.push(0); return a.slice(0,12); };
+    return {
+      labels, r,
+      solar: pad12(solar).map(v=>+v.toFixed(2)),
+      cons:  pad12(cons).map(v=>+v.toFixed(2)),
+      exp:   pad12(exp).map(v=>+v.toFixed(2)),
+      chartType: 'bar', yUnit: 'kWh',
+      ...this._donutDataFromArrays(solar, selfCons, cons, gridCons, 'kWh'),
+    };
+  }
+
+  _donutDataFromArrays(solar, selfCons, cons, gridCons, unit) {
+    const sum = arr => arr.reduce((a,b) => a+(+b||0), 0);
+    const prodTotal = +sum(solar).toFixed(2);
+    const prodCons  = +sum(selfCons).toFixed(2);
+    const prodGrid  = +(Math.max(0, prodTotal - prodCons)).toFixed(2);
+    const consTotal = +sum(cons).toFixed(2);
+    const consPV    = prodCons;
+    const consGrid  = +sum(gridCons).toFixed(2);
+    const prodConsPct = prodTotal > 0 ? +((prodCons/prodTotal)*100).toFixed(2) : 0;
+    const prodGridPct = prodTotal > 0 ? +((prodGrid/prodTotal)*100).toFixed(2) : 0;
+    const consGridPct = consTotal > 0 ? +((consGrid/consTotal)*100).toFixed(2) : 0;
+    const consPVPct   = consTotal > 0 ? +((consPV/consTotal)*100).toFixed(2) : 0;
+    return { prodTotal, prodCons, prodGrid, prodConsPct, prodGridPct, consTotal, consPV, consGrid, consPVPct, consGridPct, unit };
+  }
+
+  _buildLifetimeData(sn, cfg, vals) {
+    const { prodTotal, prodCons, prodGrid, consTotal, consPV, consGrid } = vals;
+    const prodConsPct = prodTotal > 0 ? +((prodCons/prodTotal)*100).toFixed(2) : 0;
+    const prodGridPct = prodTotal > 0 ? +((prodGrid/prodTotal)*100).toFixed(2) : 0;
+    const consGridPct = consTotal > 0 ? +((consGrid/consTotal)*100).toFixed(2) : 0;
+    const consPVPct   = consTotal > 0 ? +((consPV/consTotal)*100).toFixed(2) : 0;
+    // Lifetime chart: year by year — best effort from available entities
+    return {
+      labels: ['Total'], r: 'lifetime',
+      solar: [prodTotal], cons: [consTotal], exp: [prodGrid],
+      chartType: 'bar', yUnit: 'kWh',
+      prodTotal: +(prodTotal/1000).toFixed(2), prodCons: +(prodCons/1000).toFixed(2),
+      prodGrid: +(prodGrid/1000).toFixed(2), prodConsPct, prodGridPct,
+      consTotal: +(consTotal/1000).toFixed(2), consPV: +(consPV/1000).toFixed(2),
+      consGrid: +(consGrid/1000).toFixed(2), consPVPct, consGridPct, unit: 'MWh',
+    };
+  }
+
+  // ── Fallback: entity states when recorder unavailable ────────────────────
+  _fallbackData(cfg, r) {
+    const sn = (id) => { if (!id||!this.hass) return 0; const e=this.hass.states[id]; return e?parseFloat(e.state)||0:0; };
+    const prodTotal = sn(r==='day'?cfg.production_today_entity:r==='month'?cfg.production_month_entity:cfg.panel_production_year_entity);
+    const consTotal = sn(r==='day'?cfg.consumption_today_entity:r==='month'?cfg.consumption_month_entity:cfg.house_load_year_entity);
+    const expTotal  = sn(r==='day'?cfg.export_today_entity:r==='month'?cfg.export_month_entity:cfg.grid_injection_year_entity);
+    const prodCons  = sn(r==='day'?cfg.panel_production_consumption_today_entity:r==='month'?cfg.panel_production_consumption_month_entity:cfg.panel_production_consumption_year_entity);
+    const gridCons  = sn(r==='day'?cfg.grid_consumption_today_entity:r==='month'?cfg.grid_consumption_month_entity:cfg.grid_consumption_year_entity);
+    const labels = r==='day'?['Live','Today']:r==='month'?['This month']:['This year'];
+    const mkArr = v => r==='day'?[sn(cfg.solar_power_entity),v]:[v];
+    return {
+      labels, r,
+      solar: mkArr(prodTotal), cons: mkArr(consTotal), exp: mkArr(expTotal),
+      chartType: r==='day'?'line':'bar', yUnit: r==='day'?'kW':'kWh',
+      ...this._donutDataFromArrays([prodTotal],[prodCons],[consTotal],[gridCons],'kWh'),
+    };
+  }
+
+  // ── Chart build ───────────────────────────────────────────────────────────
   _buildChart() {
     const canvas = this.shadowRoot && this.shadowRoot.getElementById('fs-chart');
-    if (!canvas || typeof Chart === 'undefined') return;
-
-    const { labels, solar, cons, exp, r } = this._getChartData();
-
+    if (!canvas || typeof Chart === 'undefined' || !this._statsData) return;
+    const d = this._statsData;
     if (this._chart) this._chart.destroy();
-
+    const isLine = d.chartType === 'line';
     this._chart = new Chart(canvas, {
-      type: 'line',
+      type: d.chartType,
       data: {
-        labels,
+        labels: d.labels,
         datasets: [
-          { label:'PV production', data:solar, borderColor:'#00e676', backgroundColor:'rgba(0,230,118,0.07)', fill:true, tension:0.4, pointRadius:4, pointBackgroundColor:'#00e676', borderWidth:2 },
-          { label:'Consumption',   data:cons,  borderColor:'#ff2d8f', backgroundColor:'transparent',           fill:false,tension:0.4, pointRadius:4, pointBackgroundColor:'#ff2d8f', borderWidth:2, borderDash:[5,3] },
-          { label:'Grid export',   data:exp,   borderColor:'#00e5ff', backgroundColor:'rgba(0,229,255,0.06)', fill:true, tension:0.4, pointRadius:4, pointBackgroundColor:'#00e5ff', borderWidth:2 },
+          { label:'PV production', data:d.solar,
+            borderColor:'#00e676', backgroundColor:isLine?'rgba(0,230,118,0.08)':'rgba(0,230,118,0.75)',
+            fill:isLine, tension:isLine?0.4:0, pointRadius:isLine?2:0, pointBackgroundColor:'#00e676',
+            borderWidth:isLine?2:0, borderRadius:isLine?0:3 },
+          { label:'Consumption', data:d.cons,
+            borderColor:'#ff2d8f', backgroundColor:isLine?'transparent':'rgba(255,45,143,0.75)',
+            fill:false, tension:isLine?0.4:0, pointRadius:isLine?2:0, pointBackgroundColor:'#ff2d8f',
+            borderWidth:isLine?2:0, borderDash:isLine?[5,3]:undefined, borderRadius:isLine?0:3 },
+          { label:'Grid export', data:d.exp,
+            borderColor:'#00e5ff', backgroundColor:isLine?'rgba(0,229,255,0.07)':'rgba(0,229,255,0.75)',
+            fill:isLine, tension:isLine?0.4:0, pointRadius:isLine?2:0, pointBackgroundColor:'#00e5ff',
+            borderWidth:isLine?2:0, borderRadius:isLine?0:3 },
         ],
       },
       options: {
-        responsive: true, maintainAspectRatio: false,
-        interaction: { mode:'index', intersect:false },
-        plugins: {
-          legend: { display:false },
-          tooltip: {
+        responsive:true, maintainAspectRatio:false,
+        interaction:{ mode:'index', intersect:false },
+        plugins:{
+          legend:{ display:false },
+          tooltip:{
             backgroundColor:'rgba(8,15,35,0.92)', borderColor:'rgba(255,255,255,0.1)', borderWidth:1,
             titleColor:'#8b949e', bodyColor:'#e6edf3',
             titleFont:{ family:'DM Mono,monospace', size:10 },
-            bodyFont: { family:'DM Mono,monospace', size:11 },
-            padding:10,
-            callbacks: {
-              label: ctx => {
-                const unit = r === 'day'
-                  ? (ctx.dataIndex === 0 ? 'kW live' : 'kWh today')
-                  : (r === 'week' ? 'kWh' : 'kWh');
-                return ` ${ctx.dataset.label}: ${ctx.parsed.y} ${unit}`;
-              },
-            },
+            bodyFont:{ family:'DM Mono,monospace', size:11 }, padding:10,
+            callbacks:{ label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)} ${d.yUnit}` },
           },
         },
-        scales: {
-          x: { grid:{ color:'rgba(255,255,255,0.05)' }, ticks:{ font:{ size:9 }, color:'#5a7090', maxRotation:0 } },
-          y: { grid:{ color:'rgba(255,255,255,0.05)' }, ticks:{ font:{ size:9 }, color:'#5a7090', callback: v => v+(r==='week'||r==='month'?'kWh':'') } },
+        scales:{
+          x:{ grid:{color:'rgba(255,255,255,0.05)'}, ticks:{font:{size:9},color:'#5a7090',maxRotation:0,maxTicksLimit:12} },
+          y:{ grid:{color:'rgba(255,255,255,0.05)'}, ticks:{font:{size:9},color:'#5a7090',callback:v=>v+d.yUnit} },
         },
       },
     });
   }
+
+  // ── Donut arc calculation ─────────────────────────────────────────────────
+  // Returns SVG stroke-dasharray and stroke-dashoffset for two arcs
+  _donutArcs(pct1) {
+    const CIRC = 219.9, GAP = 3;
+    const pct2 = 100 - pct1;
+    const a1 = Math.max(0, pct1/100*CIRC - GAP);
+    const a2 = Math.max(0, pct2/100*CIRC - GAP);
+    return {
+      arc1da: `${a1} ${CIRC-a1}`, arc1do: '0',
+      arc2da: `${a2} ${CIRC-a2}`, arc2do: `${-(a1+GAP)}`,
+    };
+  }
+
+  // ── Range/offset controls ─────────────────────────────────────────────────
+  _setRange(r) { this._range = r; this._offset = 0; }
+  _navPrev()   { if (this._range !== 'lifetime') this._offset = this._offset - 1; }
+  _navNext()   { if (this._range !== 'lifetime' && this._offset < 0) this._offset = this._offset + 1; }
 
   // ── Arc gauge helper ───────────────────────────────────────────────────────
   _arcOffset(val, max) {
@@ -334,21 +543,6 @@ class FusionSolarCard extends LitElement {
     const statusRaw = cfg.inverter_status_entity ? sLabel(hass, cfg.inverter_status_entity) : 'Live';
     const isLive    = statusRaw === '—' || statusRaw.toLowerCase().includes('grid') || statusRaw === 'Live';
     const statusTxt = statusRaw === '—' ? 'Live' : statusRaw;
-
-    // Summary values
-    const genToday  = cfg.production_today_entity  ? sf(hass, cfg.production_today_entity,  2) : null;
-    const consToday = cfg.consumption_today_entity ? sf(hass, cfg.consumption_today_entity, 2) : null;
-    const expToday  = cfg.export_today_entity      ? sf(hass, cfg.export_today_entity,      2) : null;
-    const genWeek   = cfg.production_week_entity   ? sf(hass, cfg.production_week_entity,   2) : null;
-    const consWeek  = cfg.consumption_week_entity  ? sf(hass, cfg.consumption_week_entity,  2) : null;
-    const expWeek   = cfg.export_week_entity       ? sf(hass, cfg.export_week_entity,       2) : null;
-    const genMonth  = cfg.production_month_entity  ? sf(hass, cfg.production_month_entity,  2) : null;
-    const consMonth = cfg.consumption_month_entity ? sf(hass, cfg.consumption_month_entity, 2) : null;
-    const expMonth  = cfg.export_month_entity      ? sf(hass, cfg.export_month_entity,      2) : null;
-
-    const sumGen  = this._chartRange === 'day' ? genToday  : this._chartRange === 'week' ? genWeek  : genMonth;
-    const sumCons = this._chartRange === 'day' ? consToday : this._chartRange === 'week' ? consWeek : consMonth;
-    const sumExp  = this._chartRange === 'day' ? expToday  : this._chartRange === 'week' ? expWeek  : expMonth;
 
     return html`
       <ha-card>
@@ -537,33 +731,39 @@ class FusionSolarCard extends LitElement {
             ` : ''}
           </div>
 
+          <!-- ── Unified Tab Bar ── -->
+          <div class="fs-tabbar">
+            <button class="fs-rtab ${this._range==='day'      ?'active':''}" @click="${()=>this._setRange('day')}">Day</button>
+            <button class="fs-rtab ${this._range==='month'    ?'active':''}" @click="${()=>this._setRange('month')}">Month</button>
+            <button class="fs-rtab ${this._range==='year'     ?'active':''}" @click="${()=>this._setRange('year')}">Year</button>
+            <button class="fs-rtab ${this._range==='lifetime' ?'active':''}" @click="${()=>this._setRange('lifetime')}">Lifetime</button>
+          </div>
+
+          <!-- ── Date navigation ── -->
+          <div class="fs-datenav">
+            <button class="fs-datenav-arrow" @click="${()=>this._navPrev()}" ?disabled="${this._range==='lifetime'}">‹</button>
+            <span class="fs-datenav-label">${this._dateLabel()}</span>
+            <button class="fs-datenav-arrow" @click="${()=>this._navNext()}" ?disabled="${this._range==='lifetime' || this._offset >= 0}">›</button>
+          </div>
+
+          <!-- ── Energy Panels: Production + Consumption donuts ── -->
+          ${this._renderEnergyPanels()}
+
           <!-- ── Chart ── -->
           <div class="fs-chart-wrap">
             <div class="fs-chart-header">
               <span class="fs-chart-label">Energy History</span>
-              <div class="fs-tabs">
-                <button class="fs-tab ${this._chartRange==='day'  ?'active':''}" @click="${()=>this._setRange('day')}">Day</button>
-                <button class="fs-tab ${this._chartRange==='week' ?'active':''}" @click="${()=>this._setRange('week')}">Week</button>
-                <button class="fs-tab ${this._chartRange==='month'?'active':''}" @click="${()=>this._setRange('month')}">Month</button>
-              </div>
+              ${this._statsLoading ? html`<span class="fs-loading-dot"></span>` : ''}
             </div>
             <div class="fs-chart-area">
               <div class="fs-legend">
                 <span class="fs-leg-item"><span class="fs-leg-dot" style="background:#00e676"></span>PV production</span>
                 <span class="fs-leg-item"><span class="fs-leg-dot" style="background:#ff2d8f"></span>Consumption</span>
                 <span class="fs-leg-item"><span class="fs-leg-dot" style="background:#00e5ff"></span>Grid export</span>
-                ${this._chartRange === 'day' ? html`<span style="font-size:9px;color:#6a8aaa;margin-left:4px">· Live kW &amp; Today kWh</span>` : ''}
               </div>
               <div class="fs-chart-canvas-wrap">
                 <canvas id="fs-chart" role="img" aria-label="Energy history chart"></canvas>
               </div>
-            </div>
-
-            <!-- Summary -->
-            <div class="fs-summary">
-              ${sumGen  !== null ? html`<div class="fs-sum-card"><div class="fs-sum-lbl">Generated</div><div class="fs-sum-val" style="color:#00e676">${sumGen}<span class="fs-sum-unit">kWh</span></div></div>` : ''}
-              ${sumCons !== null ? html`<div class="fs-sum-card"><div class="fs-sum-lbl">Consumed</div><div class="fs-sum-val" style="color:#ff2d8f">${sumCons}<span class="fs-sum-unit">kWh</span></div></div>` : ''}
-              ${sumExp  !== null ? html`<div class="fs-sum-card"><div class="fs-sum-lbl">Exported</div><div class="fs-sum-val" style="color:#00e5ff">${sumExp}<span class="fs-sum-unit">kWh</span></div></div>` : ''}
             </div>
           </div>
 
@@ -604,11 +804,91 @@ class FusionSolarCard extends LitElement {
     `;
   }
 
-  _setRange(r) {
-    this._chartRange = r;
-  }
+  // ── Energy Panels renderer ───────────────────────────────────────────────
+  _renderEnergyPanels() {
+    const d = this._statsData;
+    if (!d) {
+      return this._statsLoading
+        ? html`<div class="fs-panels-loading">Loading statistics…</div>`
+        : html`<div class="fs-panels-loading">Configure production &amp; consumption entities to see energy breakdown</div>`;
+    }
 
-  // ── Detail section renderers ───────────────────────────────────────────────
+    const fmt = (v) => typeof v === 'number' ? v.toFixed(2) : (v || '—');
+    const pa = this._donutArcs(d.prodConsPct);
+    const ca = this._donutArcs(d.consPVPct);
+
+    return html`
+      <div class="fs-panels">
+
+        <!-- Production panel -->
+        <div class="fs-panel">
+          <div class="fs-panel-title">
+            <span class="fs-panel-dot" style="background:#00e676;box-shadow:0 0 6px #00e676;"></span>
+            Production
+          </div>
+          <div class="fs-panel-inner">
+            <div class="fs-donut-wrap">
+              <svg viewBox="0 0 90 90" xmlns="http://www.w3.org/2000/svg" style="transform:rotate(-90deg);width:100%;height:100%;">
+                <circle cx="45" cy="45" r="35" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="8"/>
+                <circle cx="45" cy="45" r="35" fill="none" stroke="#1a6640" stroke-width="8" stroke-linecap="round"
+                  stroke-dasharray="${pa.arc1da}" stroke-dashoffset="${pa.arc1do}"/>
+                <circle cx="45" cy="45" r="35" fill="none" stroke="#00e676" stroke-width="8" stroke-linecap="round"
+                  stroke-dasharray="${pa.arc2da}" stroke-dashoffset="${pa.arc2do}"/>
+              </svg>
+              <div class="fs-donut-center">
+                <div class="fs-donut-val" style="color:#00e676">${fmt(d.prodTotal)}</div>
+                <div class="fs-donut-unit">${d.unit}</div>
+              </div>
+            </div>
+            <div class="fs-panel-stats">
+              <div class="fs-pstat">
+                <div class="fs-pstat-val" style="color:#1a6640">${fmt(d.prodCons)}<span class="fs-pstat-u">${d.unit}</span></div>
+                <div class="fs-pstat-lbl">Consumed (${d.prodConsPct}%)</div>
+              </div>
+              <div class="fs-pstat">
+                <div class="fs-pstat-val" style="color:#00e676">${fmt(d.prodGrid)}<span class="fs-pstat-u">${d.unit}</span></div>
+                <div class="fs-pstat-lbl">Fed to grid (${d.prodGridPct}%)</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Consumption panel -->
+        <div class="fs-panel">
+          <div class="fs-panel-title">
+            <span class="fs-panel-dot" style="background:#ff2d8f;box-shadow:0 0 6px #ff2d8f;"></span>
+            Consumption
+          </div>
+          <div class="fs-panel-inner">
+            <div class="fs-donut-wrap">
+              <svg viewBox="0 0 90 90" xmlns="http://www.w3.org/2000/svg" style="transform:rotate(-90deg);width:100%;height:100%;">
+                <circle cx="45" cy="45" r="35" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="8"/>
+                <circle cx="45" cy="45" r="35" fill="none" stroke="#ff5722" stroke-width="8" stroke-linecap="round"
+                  stroke-dasharray="${ca.arc1da}" stroke-dashoffset="${ca.arc1do}"/>
+                <circle cx="45" cy="45" r="35" fill="none" stroke="#f59e0b" stroke-width="8" stroke-linecap="round"
+                  stroke-dasharray="${ca.arc2da}" stroke-dashoffset="${ca.arc2do}"/>
+              </svg>
+              <div class="fs-donut-center">
+                <div class="fs-donut-val" style="color:#ff2d8f">${fmt(d.consTotal)}</div>
+                <div class="fs-donut-unit">${d.unit}</div>
+              </div>
+            </div>
+            <div class="fs-panel-stats">
+              <div class="fs-pstat">
+                <div class="fs-pstat-val" style="color:#ff5722">${fmt(d.consPV)}<span class="fs-pstat-u">${d.unit}</span></div>
+                <div class="fs-pstat-lbl">From PV (${d.consPVPct}%)</div>
+              </div>
+              <div class="fs-pstat">
+                <div class="fs-pstat-val" style="color:#f59e0b">${fmt(d.consGrid)}<span class="fs-pstat-u">${d.unit}</span></div>
+                <div class="fs-pstat-lbl">From grid (${d.consGridPct}%)</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    `;
+  }
 
   _detSection(id, dotColor, title, content) {
     const open = !!this._openSections[id];
@@ -927,6 +1207,43 @@ class FusionSolarCard extends LitElement {
       .gau-bat-bar  { width:80%; margin:3px auto 0; height:3px; background:rgba(255,255,255,0.08); border-radius:2px; overflow:hidden; }
       .gau-bat-fill { height:100%; background:#8b5cf6; border-radius:2px; box-shadow:0 0 5px #8b5cf6; }
 
+      /* ── Unified tab bar ── */
+      .fs-tabbar { display:flex; gap:4px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.07); border-radius:12px; padding:4px; margin-top:1rem; }
+      .fs-rtab   { flex:1; padding:7px 4px; font-size:11px; font-weight:600; text-align:center; border-radius:8px; cursor:pointer; color:#6a8aaa; letter-spacing:0.06em; text-transform:uppercase; transition:all .15s; border:1px solid transparent; background:transparent; font-family:inherit; }
+      .fs-rtab.active { background:rgba(0,230,118,0.14); color:#00e676; border-color:rgba(0,230,118,0.28); }
+      .fs-rtab:hover:not(.active) { background:rgba(255,255,255,0.03); color:#ddeeff; }
+
+      /* ── Date navigation ── */
+      .fs-datenav { display:flex; align-items:center; justify-content:center; gap:18px; margin:0.8rem 0; }
+      .fs-datenav-arrow { background:none; border:none; color:#6a8aaa; font-size:20px; cursor:pointer; padding:4px 10px; font-family:inherit; transition:color .15s; border-radius:6px; }
+      .fs-datenav-arrow:hover:not([disabled]) { color:#ddeeff; background:rgba(255,255,255,0.04); }
+      .fs-datenav-arrow[disabled] { opacity:0.2; cursor:default; }
+      .fs-datenav-label { font-size:14px; font-weight:500; color:#ddeeff; min-width:120px; text-align:center; }
+
+      /* ── Energy panels: 2-col desktop / 1-col mobile ── */
+      .fs-panels { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px; }
+      .fs-panel  { background:rgba(3,8,20,0.55); backdrop-filter:blur(16px); border:1px solid rgba(255,255,255,0.07); border-radius:13px; padding:0.9rem; }
+      .fs-panel-title { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.09em; color:#6a8aaa; margin-bottom:0.8rem; display:flex; align-items:center; gap:7px; }
+      .fs-panel-dot   { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+      .fs-panel-inner { display:flex; align-items:center; gap:10px; }
+
+      /* ── Donut ── */
+      .fs-donut-wrap   { position:relative; width:88px; height:88px; flex-shrink:0; }
+      .fs-donut-center { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+      .fs-donut-val  { font-family:'DM Mono',monospace; font-size:13px; font-weight:500; line-height:1.1; }
+      .fs-donut-unit { font-size:8px; color:#6a8aaa; margin-top:2px; }
+
+      /* ── Panel stat rows ── */
+      .fs-panel-stats { display:flex; flex-direction:column; gap:6px; flex:1; min-width:0; }
+      .fs-pstat       { background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:7px; padding:5px 8px; }
+      .fs-pstat-val   { font-family:'DM Mono',monospace; font-size:13px; font-weight:500; white-space:nowrap; }
+      .fs-pstat-u     { font-size:8px; color:#6a8aaa; margin-left:2px; }
+      .fs-pstat-lbl   { font-size:9px; color:#6a8aaa; margin-top:2px; }
+
+      /* ── Loading ── */
+      .fs-panels-loading { text-align:center; font-size:11px; color:#6a8aaa; padding:1rem; margin-bottom:8px; }
+      .fs-loading-dot    { display:inline-block; width:6px; height:6px; border-radius:50%; background:#00e676; animation:fspulse 1s infinite; }
+
       /* ── Chart ── */
       .fs-chart-wrap   { margin-top:1rem; }
       .fs-chart-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:0.55rem; }
@@ -987,17 +1304,17 @@ class FusionSolarCard extends LitElement {
 
       /* ── Responsive ── */
       @media (max-width: 480px) {
-        .fs-gauges { grid-template-columns: repeat(2,1fr); }
-        .fs-flow   { height:380px; }
-        .fs-summary{ grid-template-columns: repeat(3,1fr); }
-        .det-grid  { grid-template-columns: 1fr 1fr; }
-        .fs-card   { padding:0.9rem; border-radius:16px; }
+        .fs-gauges  { grid-template-columns: repeat(2,1fr); }
+        .fs-flow    { height:380px; }
+        .fs-panels  { grid-template-columns: 1fr; }
+        .det-grid   { grid-template-columns: 1fr 1fr; }
+        .fs-card    { padding:0.9rem; border-radius:16px; }
+        .fs-rtab    { font-size:10px; padding:6px 2px; }
       }
       @media (max-width: 340px) {
-        .fs-gauges { grid-template-columns: repeat(2,1fr); }
-        .fs-flow   { height:340px; }
-        .det-grid  { grid-template-columns: 1fr; }
-        .fs-summary{ grid-template-columns: 1fr 1fr; }
+        .fs-gauges  { grid-template-columns: repeat(2,1fr); }
+        .fs-flow    { height:340px; }
+        .det-grid   { grid-template-columns: 1fr; }
       }
     `;
   }
