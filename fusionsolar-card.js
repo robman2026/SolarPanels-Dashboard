@@ -163,8 +163,12 @@ class FusionSolarCard extends LitElement {
   }
 
   updated(changed) {
-    if (changed.has('hass') || changed.has('_chartRange')) {
+    if (changed.has('_chartRange') || changed.has('_config')) {
+      // Range or config changed — full rebuild needed
       loadChartJs(() => this._buildChart());
+    } else if (changed.has('hass') && this._chart) {
+      // Only entity values changed — patch in-place, no flicker
+      loadChartJs(() => this._patchChart());
     }
   }
 
@@ -173,46 +177,56 @@ class FusionSolarCard extends LitElement {
     if (this._chart) { this._chart.destroy(); this._chart = null; }
   }
 
-  _buildChart() {
-    const canvas = this.shadowRoot && this.shadowRoot.getElementById('fs-chart');
-    if (!canvas || typeof Chart === 'undefined') return;
+  // Patch existing chart data without destroying/recreating — prevents flicker
+  _patchChart() {
+    if (!this._chart) { this._buildChart(); return; }
+    const { solar, cons, exp } = this._getChartData();
+    this._chart.data.datasets[0].data = solar;
+    this._chart.data.datasets[1].data = cons;
+    this._chart.data.datasets[2].data = exp;
+    this._chart.update('none'); // 'none' = skip animation on data patch
+  }
 
+  _getChartData() {
     const cfg  = this._config;
     const hass = this.hass;
     const r    = this._chartRange;
-
-    // Build dataset values from HA entities, falling back to 0
     let labels, solar, cons, exp;
 
     if (r === 'day') {
-      // For day view we only have single "today" values — show as simple bar-style
-      // but we build a plausible hourly curve if the entity is available
       labels = ['6h','7h','8h','9h','10h','11h','12h','13h','14h','15h','16h','17h','18h','19h'];
       const todayMax = sn(hass, cfg.production_today_entity, 0);
-      // Gaussian-shaped daily curve scaled to today's total
-      const curve = [0,0.01,0.08,0.18,0.30,0.38,0.44,0.42,0.37,0.29,0.20,0.12,0.05,0.01];
-      solar = curve.map(v => +(v * todayMax * 14).toFixed(2)); // scale to fill ~14h
+      const curve    = [0,0.01,0.08,0.18,0.30,0.38,0.44,0.42,0.37,0.29,0.20,0.12,0.05,0.01];
+      solar = curve.map(v => +(v * todayMax * 14).toFixed(2));
       const cMax = sn(hass, cfg.consumption_today_entity, 0);
       cons  = curve.map(v => +(v * cMax * 8 + cMax * 0.03).toFixed(2));
       const eMax = sn(hass, cfg.export_today_entity, 0);
       exp   = curve.map(v => +(v * eMax * 14).toFixed(2));
     } else if (r === 'week') {
       labels = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-      const w = sn(hass, cfg.production_week_entity, 0);
-      solar  = [0.13,0.16,0.09,0.15,0.17,0.18,0.12].map(v => +(v * w).toFixed(1));
+      const w  = sn(hass, cfg.production_week_entity, 0);
+      solar    = [0.13,0.16,0.09,0.15,0.17,0.18,0.12].map(v => +(v * w).toFixed(1));
       const cw = sn(hass, cfg.consumption_week_entity, 0);
-      cons   = [0.14,0.17,0.12,0.15,0.15,0.16,0.11].map(v => +(v * cw).toFixed(1));
+      cons     = [0.14,0.17,0.12,0.15,0.15,0.16,0.11].map(v => +(v * cw).toFixed(1));
       const ew = sn(hass, cfg.export_week_entity, 0);
-      exp    = [0.12,0.16,0.06,0.14,0.18,0.20,0.14].map(v => +(v * ew).toFixed(1));
+      exp      = [0.12,0.16,0.06,0.14,0.18,0.20,0.14].map(v => +(v * ew).toFixed(1));
     } else {
       labels = ['Week 1','Week 2','Week 3','Week 4'];
-      const m = sn(hass, cfg.production_month_entity, 0);
-      solar  = [0.22,0.28,0.21,0.29].map(v => +(v * m).toFixed(1));
+      const m  = sn(hass, cfg.production_month_entity, 0);
+      solar    = [0.22,0.28,0.21,0.29].map(v => +(v * m).toFixed(1));
       const cm = sn(hass, cfg.consumption_month_entity, 0);
-      cons   = [0.23,0.26,0.23,0.28].map(v => +(v * cm).toFixed(1));
+      cons     = [0.23,0.26,0.23,0.28].map(v => +(v * cm).toFixed(1));
       const em = sn(hass, cfg.export_month_entity, 0);
-      exp    = [0.20,0.30,0.18,0.32].map(v => +(v * em).toFixed(1));
+      exp      = [0.20,0.30,0.18,0.32].map(v => +(v * em).toFixed(1));
     }
+    return { labels, solar, cons, exp, r };
+  }
+
+  _buildChart() {
+    const canvas = this.shadowRoot && this.shadowRoot.getElementById('fs-chart');
+    if (!canvas || typeof Chart === 'undefined') return;
+
+    const { labels, solar, cons, exp, r } = this._getChartData();
 
     if (this._chart) this._chart.destroy();
 
