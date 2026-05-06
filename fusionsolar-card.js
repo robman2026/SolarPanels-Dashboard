@@ -19,7 +19,7 @@
  *       Self-Consumption Ratios · Diagnostics
  */
 
-const CARD_VERSION = '1.0.0';
+const CARD_VERSION = '1.1.0';
 
 // ── LitElement bootstrap (same pattern as all robman2026 cards) ──────────────
 const LitElement = Object.getPrototypeOf(customElements.get('ha-panel-lovelace'));
@@ -235,9 +235,9 @@ class FusionSolarCard extends LitElement {
       data: {
         labels,
         datasets: [
-          { label:'PV production', data:solar, borderColor:'#00f5ff', backgroundColor:'rgba(0,245,255,0.07)', fill:true, tension:0.4, pointRadius:3, pointBackgroundColor:'#00f5ff', borderWidth:2 },
+          { label:'PV production', data:solar, borderColor:'#f59e0b', backgroundColor:'rgba(245,158,11,0.07)', fill:true, tension:0.4, pointRadius:3, pointBackgroundColor:'#f59e0b', borderWidth:2 },
           { label:'Consumption',   data:cons,  borderColor:'#ff2d8f', backgroundColor:'transparent',           fill:false,tension:0.4, pointRadius:3, pointBackgroundColor:'#ff2d8f', borderWidth:2, borderDash:[5,3] },
-          { label:'Grid export',   data:exp,   borderColor:'#b4ff39', backgroundColor:'rgba(180,255,57,0.06)', fill:true, tension:0.4, pointRadius:3, pointBackgroundColor:'#b4ff39', borderWidth:2 },
+          { label:'Grid export',   data:exp,   borderColor:'#f97316', backgroundColor:'rgba(249,115,22,0.06)', fill:true, tension:0.4, pointRadius:3, pointBackgroundColor:'#f97316', borderWidth:2 },
         ],
       },
       options: {
@@ -318,15 +318,15 @@ class FusionSolarCard extends LitElement {
     const statusTxt = statusRaw === '—' ? 'Live' : statusRaw;
 
     // Summary values
-    const genToday  = cfg.production_today_entity  ? sf(hass, cfg.production_today_entity,  1) : null;
-    const consToday = cfg.consumption_today_entity ? sf(hass, cfg.consumption_today_entity, 1) : null;
-    const expToday  = cfg.export_today_entity      ? sf(hass, cfg.export_today_entity,      1) : null;
-    const genWeek   = cfg.production_week_entity   ? sf(hass, cfg.production_week_entity,   1) : null;
-    const consWeek  = cfg.consumption_week_entity  ? sf(hass, cfg.consumption_week_entity,  1) : null;
-    const expWeek   = cfg.export_week_entity       ? sf(hass, cfg.export_week_entity,       1) : null;
-    const genMonth  = cfg.production_month_entity  ? sf(hass, cfg.production_month_entity,  1) : null;
-    const consMonth = cfg.consumption_month_entity ? sf(hass, cfg.consumption_month_entity, 1) : null;
-    const expMonth  = cfg.export_month_entity      ? sf(hass, cfg.export_month_entity,      1) : null;
+    const genToday  = cfg.production_today_entity  ? sf(hass, cfg.production_today_entity,  2) : null;
+    const consToday = cfg.consumption_today_entity ? sf(hass, cfg.consumption_today_entity, 2) : null;
+    const expToday  = cfg.export_today_entity      ? sf(hass, cfg.export_today_entity,      2) : null;
+    const genWeek   = cfg.production_week_entity   ? sf(hass, cfg.production_week_entity,   2) : null;
+    const consWeek  = cfg.consumption_week_entity  ? sf(hass, cfg.consumption_week_entity,  2) : null;
+    const expWeek   = cfg.export_week_entity       ? sf(hass, cfg.export_week_entity,       2) : null;
+    const genMonth  = cfg.production_month_entity  ? sf(hass, cfg.production_month_entity,  2) : null;
+    const consMonth = cfg.consumption_month_entity ? sf(hass, cfg.consumption_month_entity, 2) : null;
+    const expMonth  = cfg.export_month_entity      ? sf(hass, cfg.export_month_entity,      2) : null;
 
     const sumGen  = this._chartRange === 'day' ? genToday  : this._chartRange === 'week' ? genWeek  : genMonth;
     const sumCons = this._chartRange === 'day' ? consToday : this._chartRange === 'week' ? consWeek : consMonth;
@@ -349,67 +349,134 @@ class FusionSolarCard extends LitElement {
           </div>
 
           <!-- ── Animated Flow Diagram ── -->
+          <!-- Flow: Sun→PV Panels→Inverter→House  |  Grid→House -->
           <div class="fs-flow">
-            <svg viewBox="0 0 440 260" xmlns="http://www.w3.org/2000/svg">
+            <svg viewBox="0 0 520 440" xmlns="http://www.w3.org/2000/svg">
               <defs>
-                <filter id="gls"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-                <filter id="glh"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-                <filter id="glg"><feGaussianBlur stdDeviation="2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-                <filter id="glb"><feGaussianBlur stdDeviation="2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-                <marker id="ms" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#00f5ff" opacity="0.9"/></marker>
-                <marker id="mg" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#b4ff39" opacity="0.9"/></marker>
-                <marker id="mb" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#8b5cf6" opacity="0.9"/></marker>
-                <marker id="mh" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#ff2d8f" opacity="0.9"/></marker>
+                <marker id="a-sol"  markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#f59e0b"/></marker>
+                <marker id="a-pv"   markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#22c55e"/></marker>
+                <marker id="a-inv"  markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#00f5ff"/></marker>
+                <marker id="a-grid" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#f97316"/></marker>
               </defs>
 
-              <!-- Solar → House -->
-              <path class="fp ${solar > 0 ? '' : 'fp-idle'}" d="M128,72 Q220,50 278,130" stroke="#00f5ff" stroke-width="2.5" fill="none" marker-end="url(#ms)" opacity="0.9" filter="url(#gls)"/>
-              <!-- Solar → Battery (charging) -->
-              ${batSoc !== null ? html`<path class="fp fp-slow ${solar > 0.1 ? '' : 'fp-idle'}" d="M100,105 Q78,155 102,195" stroke="#8b5cf6" stroke-width="1.5" fill="none" marker-end="url(#mb)" opacity="0.7"/>` : ''}
-              <!-- Grid → House -->
-              <path class="fp fp-slow ${grid > 0.05 ? '' : 'fp-idle'}" d="M316,72 Q338,125 318,152" stroke="#b4ff39" stroke-width="1.5" fill="none" marker-end="url(#mh)" opacity="0.6"/>
-              <!-- Battery → House -->
-              ${batSoc !== null ? html`<path class="fp fp-slow ${batSoc > 10 ? '' : 'fp-idle'}" d="M138,200 Q215,222 278,170" stroke="#8b5cf6" stroke-width="1.5" fill="none" marker-end="url(#mh)" opacity="0.6"/>` : ''}
+              <!-- ── Flow paths ── -->
+              <!-- 1. Sun → PV Panels -->
+              <path class="fp ${solar > 0 ? '' : 'fp-idle'}" d="M228,112 Q166,162 134,234" stroke="#f59e0b" stroke-width="2" fill="none" marker-end="url(#a-sol)" opacity="0.85"/>
+              <!-- 2. PV Panels → Inverter (DC) -->
+              <path class="fp ${solar > 0 ? '' : 'fp-idle'}" d="M140,286 Q196,316 230,334" stroke="#22c55e" stroke-width="2" fill="none" marker-end="url(#a-pv)" opacity="0.85"/>
+              <!-- 3. Inverter → House (AC, short stub) -->
+              <line class="fp ${solar > 0 ? '' : 'fp-idle'}" x1="260" y1="314" x2="260" y2="302" stroke="#00f5ff" stroke-width="2.2" fill="none" marker-end="url(#a-inv)" opacity="0.9"/>
+              <!-- 4. Grid → House -->
+              <path class="fp fp-slow ${grid > 0.05 ? '' : 'fp-idle'}" d="M388,265 Q338,265 302,265" stroke="#f97316" stroke-width="1.8" fill="none" marker-end="url(#a-grid)" opacity="0.8"/>
 
-              <!-- Labels -->
-              <text x="208" y="26" text-anchor="middle" font-size="9" fill="#00f5ff" opacity="0.55" font-family="DM Sans,sans-serif">Solar → House</text>
-              ${batSoc !== null ? html`
-                <text x="56"  y="152" text-anchor="middle" font-size="8" fill="#8b5cf6" opacity="0.45" font-family="DM Sans,sans-serif">Charging</text>
-                <text x="190" y="246" text-anchor="middle" font-size="8" fill="#8b5cf6" opacity="0.40" font-family="DM Sans,sans-serif">Battery → House</text>
-              ` : ''}
+              <!-- Flow value labels -->
+              <text x="174" y="170" font-size="9" fill="#f59e0b" opacity="${solar > 0 ? '0.7' : '0.15'}" font-family="DM Mono,monospace" text-anchor="middle">${solar.toFixed(2)} kW</text>
+              <text x="183" y="328" font-size="9" fill="#22c55e" opacity="${solar > 0 ? '0.7' : '0.15'}" font-family="DM Mono,monospace" text-anchor="middle">${solar.toFixed(2)} kW</text>
+              <text x="344" y="256" font-size="9" fill="#f97316" opacity="${grid > 0.05 ? '0.7' : '0.15'}" font-family="DM Mono,monospace" text-anchor="middle">${grid.toFixed(2)} kW</text>
 
-              <!-- Solar node -->
-              <g transform="translate(80,60)" filter="url(#gls)">
-                <circle r="40" fill="rgba(0,245,255,0.07)" stroke="#00f5ff" stroke-width="1.8"/>
-                <text y="-10" text-anchor="middle" font-size="20">☀️</text>
-                <text y="9"  text-anchor="middle" font-family="DM Mono,monospace" font-size="13" fill="#00f5ff" font-weight="500">${solar.toFixed(1)}</text>
-                <text y="22" text-anchor="middle" font-size="8" fill="#6a8aaa" font-family="DM Sans,sans-serif">kW</text>
-              </g>
-
-              <!-- Grid node -->
-              <g transform="translate(360,58)" filter="url(#glg)">
-                <circle r="34" fill="rgba(180,255,57,0.06)" stroke="#b4ff39" stroke-width="1.8"/>
-                <text y="-8" text-anchor="middle" font-size="17">⚡</text>
-                <text y="9"  text-anchor="middle" font-family="DM Mono,monospace" font-size="12" fill="#b4ff39" font-weight="500">${grid.toFixed(1)}</text>
-                <text y="22" text-anchor="middle" font-size="8" fill="#6a8aaa" font-family="DM Sans,sans-serif">kW</text>
-              </g>
-
-              <!-- Battery node (optional) -->
-              ${batSoc !== null ? html`
-                <g transform="translate(80,210)" filter="url(#glb)">
-                  <circle r="34" fill="rgba(139,92,246,0.08)" stroke="#8b5cf6" stroke-width="1.8"/>
-                  <text y="-8" text-anchor="middle" font-size="17">🔋</text>
-                  <text y="9"  text-anchor="middle" font-family="DM Mono,monospace" font-size="12" fill="#8b5cf6" font-weight="500">${batSoc.toFixed(0)}%</text>
-                  <text y="22" text-anchor="middle" font-size="8" fill="#6a8aaa" font-family="DM Sans,sans-serif">SOC</text>
+              <!-- ══ NODE: SUN (top center, 260,74) ══ -->
+              <g transform="translate(260,74)">
+                <!-- Pulsing outer ring — CSS glow animation via class -->
+                <circle class="fs-ring-sun ${solar > 0 ? '' : 'fs-ring-off'}" r="50" fill="none" stroke="#f59e0b" stroke-width="1.4"/>
+                <!-- Static node circle -->
+                <circle class="fs-glow-sol" r="37" fill="rgba(245,158,11,0.10)" stroke="#f59e0b" stroke-width="1.8"/>
+                <!-- Sun disc -->
+                <circle r="14" fill="#f59e0b" opacity="0.85"/>
+                <!-- Rays -->
+                <g stroke="#f59e0b" stroke-width="2.2" stroke-linecap="round" opacity="0.9">
+                  <line x1="0"   y1="-21" x2="0"   y2="-29"/>
+                  <line x1="0"   y1="21"  x2="0"   y2="29"/>
+                  <line x1="-21" y1="0"   x2="-29" y2="0"/>
+                  <line x1="21"  y1="0"   x2="29"  y2="0"/>
+                  <line x1="-15" y1="-15" x2="-21" y2="-21"/>
+                  <line x1="15"  y1="-15" x2="21"  y2="-21"/>
+                  <line x1="-15" y1="15"  x2="-21" y2="21"/>
+                  <line x1="15"  y1="15"  x2="21"  y2="21"/>
                 </g>
-              ` : ''}
+                <text y="52" text-anchor="middle" font-size="9" fill="#f59e0b" opacity="0.65" font-family="DM Sans,sans-serif" font-weight="600" letter-spacing="0.1em">SUN</text>
+              </g>
 
-              <!-- House node -->
-              <g transform="translate(310,165)" filter="url(#glh)">
-                <circle r="44" fill="rgba(255,45,143,0.07)" stroke="#ff2d8f" stroke-width="2"/>
-                <text y="-12" text-anchor="middle" font-size="22">🏠</text>
-                <text y="10"  text-anchor="middle" font-family="DM Mono,monospace" font-size="15" fill="#ff2d8f" font-weight="500">${house.toFixed(1)}</text>
-                <text y="24"  text-anchor="middle" font-size="8" fill="#6a8aaa" font-family="DM Sans,sans-serif">kW</text>
+              <!-- ══ NODE: PV PANELS (mid-left, 96,268) ══ -->
+              <g transform="translate(96,268)">
+                <circle class="fs-ring-pv ${solar > 0 ? '' : 'fs-ring-off'}" r="50" fill="none" stroke="#22c55e" stroke-width="1.2"/>
+                <circle class="fs-glow-pv" r="39" fill="rgba(34,197,94,0.08)" stroke="#22c55e" stroke-width="1.8"/>
+                <!-- Panel cells 2×3 -->
+                <g fill="rgba(34,197,94,0.20)" stroke="#22c55e" stroke-width="0.9">
+                  <rect x="-22" y="-15" width="13" height="9" rx="1.5"/>
+                  <rect x="-6"  y="-15" width="13" height="9" rx="1.5"/>
+                  <rect x="10"  y="-15" width="13" height="9" rx="1.5"/>
+                  <rect x="-22" y="-3"  width="13" height="9" rx="1.5"/>
+                  <rect x="-6"  y="-3"  width="13" height="9" rx="1.5"/>
+                  <rect x="10"  y="-3"  width="13" height="9" rx="1.5"/>
+                </g>
+                <!-- Glare lines -->
+                <g stroke="#22c55e" stroke-width="0.7" opacity="0.45">
+                  <line x1="-20" y1="-14" x2="-16" y2="-10"/>
+                  <line x1="-4"  y1="-14" x2="0"   y2="-10"/>
+                  <line x1="12"  y1="-14" x2="16"  y2="-10"/>
+                </g>
+                <!-- Mount legs -->
+                <line x1="-10" y1="6" x2="-14" y2="17" stroke="#22c55e" stroke-width="1.4" stroke-linecap="round" opacity="0.55"/>
+                <line x1="10"  y1="6" x2="14"  y2="17" stroke="#22c55e" stroke-width="1.4" stroke-linecap="round" opacity="0.55"/>
+                <line x1="-16" y1="17" x2="16" y2="17" stroke="#22c55e" stroke-width="1.4" stroke-linecap="round" opacity="0.45"/>
+                <text y="54" text-anchor="middle" font-size="9" fill="#22c55e" opacity="0.65" font-family="DM Sans,sans-serif" font-weight="600" letter-spacing="0.08em">PV PANELS</text>
+              </g>
+
+              <!-- ══ NODE: HOUSE (center, 260,258) — STATIC, no ring, no glow ══ -->
+              <g transform="translate(260,258)">
+                <circle r="40" fill="rgba(255,45,143,0.07)" stroke="#ff2d8f" stroke-width="2"/>
+                <!-- Roof -->
+                <polygon points="0,-22 -20,-2 20,-2" fill="#ff2d8f" opacity="0.45"/>
+                <!-- Chimney -->
+                <rect x="9" y="-26" width="6" height="9" rx="1" fill="#ff2d8f" opacity="0.38"/>
+                <!-- Walls -->
+                <rect x="-16" y="-2" width="32" height="22" rx="2" fill="#ff2d8f" opacity="0.18"/>
+                <!-- Door -->
+                <rect x="-5" y="9" width="10" height="11" rx="1.5" fill="#ff2d8f" opacity="0.5"/>
+                <!-- Left window -->
+                <rect x="-14" y="1" width="8" height="7" rx="1.5" fill="#ff2d8f" opacity="0.42"/>
+                <line x1="-10" y1="1"   x2="-10" y2="8"    stroke="#ff2d8f" stroke-width="0.8" opacity="0.6"/>
+                <line x1="-14" y1="4.5" x2="-6"  y2="4.5"  stroke="#ff2d8f" stroke-width="0.8" opacity="0.6"/>
+                <!-- Right window -->
+                <rect x="6"   y="1" width="8" height="7" rx="1.5" fill="#ff2d8f" opacity="0.42"/>
+                <line x1="10"  y1="1"   x2="10"  y2="8"    stroke="#ff2d8f" stroke-width="0.8" opacity="0.6"/>
+                <line x1="6"   y1="4.5" x2="14"  y2="4.5"  stroke="#ff2d8f" stroke-width="0.8" opacity="0.6"/>
+                <!-- kW value above node -->
+                <text y="-30" text-anchor="middle" font-size="13" fill="#ff2d8f" font-family="DM Mono,monospace" font-weight="500">${house.toFixed(2)}</text>
+                <text y="-20" text-anchor="middle" font-size="7"  fill="#ff2d8f" opacity="0.6" font-family="DM Mono,monospace">kW</text>
+                <text y="55"  text-anchor="middle" font-size="9"  fill="#ff2d8f" opacity="0.65" font-family="DM Sans,sans-serif" font-weight="600" letter-spacing="0.08em">HOUSE</text>
+              </g>
+
+              <!-- ══ NODE: INVERTER (small, below house, 260,350) ══ -->
+              <g transform="translate(260,350)">
+                <circle class="fs-ring-inv ${solar > 0 ? '' : 'fs-ring-off'}" r="32" fill="none" stroke="#00f5ff" stroke-width="1.1"/>
+                <circle class="fs-glow-inv" r="24" fill="rgba(0,245,255,0.08)" stroke="#00f5ff" stroke-width="1.5"/>
+                <!-- Box with sine wave -->
+                <rect x="-13" y="-10" width="26" height="18" rx="3" fill="rgba(0,245,255,0.12)" stroke="#00f5ff" stroke-width="0.9"/>
+                <path d="M-9,-1 Q-6,-7 -3,-1 Q0,5 3,-1 Q6,-7 9,-1" stroke="#00f5ff" stroke-width="1.3" fill="none" stroke-linecap="round" opacity="0.95"/>
+                <text x="-12" y="-5" font-size="4.5" fill="#00f5ff" opacity="0.5" font-family="DM Mono,monospace">DC</text>
+                <text x="7"   y="7"  font-size="4.5" fill="#00f5ff" opacity="0.5" font-family="DM Mono,monospace">AC</text>
+                <text y="38" text-anchor="middle" font-size="8" fill="#00f5ff" opacity="0.6" font-family="DM Sans,sans-serif" font-weight="600" letter-spacing="0.08em">INVERTER</text>
+              </g>
+
+              <!-- ══ NODE: GRID (mid-right, 424,268) ══ -->
+              <g transform="translate(424,268)">
+                <circle class="fs-ring-grid ${grid > 0.05 ? '' : 'fs-ring-off'}" r="50" fill="none" stroke="#f97316" stroke-width="1.1"/>
+                <circle class="fs-glow-grid" r="37" fill="rgba(249,115,22,0.07)" stroke="#f97316" stroke-width="1.6"/>
+                <!-- Pylon -->
+                <line x1="0"   y1="-22" x2="0"   y2="18"  stroke="#f97316" stroke-width="1.8" stroke-linecap="round" opacity="0.8"/>
+                <line x1="-17" y1="-8"  x2="17"  y2="-8"  stroke="#f97316" stroke-width="1.6" stroke-linecap="round" opacity="0.8"/>
+                <line x1="-11" y1="5"   x2="11"  y2="5"   stroke="#f97316" stroke-width="1.4" stroke-linecap="round" opacity="0.7"/>
+                <line x1="-17" y1="-8"  x2="-8"  y2="5"   stroke="#f97316" stroke-width="0.9" opacity="0.5"/>
+                <line x1="17"  y1="-8"  x2="8"   y2="5"   stroke="#f97316" stroke-width="0.9" opacity="0.5"/>
+                <line x1="0"   y1="18"  x2="-13" y2="26"  stroke="#f97316" stroke-width="1.4" stroke-linecap="round" opacity="0.6"/>
+                <line x1="0"   y1="18"  x2="13"  y2="26"  stroke="#f97316" stroke-width="1.4" stroke-linecap="round" opacity="0.6"/>
+                <circle cx="-17" cy="-8"  r="2.2" fill="#f97316" opacity="0.85"/>
+                <circle cx="17"  cy="-8"  r="2.2" fill="#f97316" opacity="0.85"/>
+                <circle cx="-11" cy="5"   r="1.8" fill="#f97316" opacity="0.75"/>
+                <circle cx="11"  cy="5"   r="1.8" fill="#f97316" opacity="0.75"/>
+                <circle cx="0"   cy="-22" r="2.8" fill="#f97316" opacity="0.9"/>
+                <text y="52" text-anchor="middle" font-size="9" fill="#f97316" opacity="0.65" font-family="DM Sans,sans-serif" font-weight="600" letter-spacing="0.1em">GRID</text>
               </g>
             </svg>
           </div>
@@ -420,9 +487,9 @@ class FusionSolarCard extends LitElement {
               <div class="gau-lbl">Solar</div>
               <svg class="gau-arc" width="54" height="30" viewBox="0 0 54 30">
                 <path d="M4,28 A23,23 0 0,1 50,28" stroke="rgba(255,255,255,0.1)" stroke-width="4" fill="none" stroke-linecap="round"/>
-                <path d="M4,28 A23,23 0 0,1 50,28" stroke="#00f5ff" stroke-width="4" fill="none" stroke-linecap="round" stroke-dasharray="72" stroke-dashoffset="${this._arcOffset(solar, 6)}"/>
+                <path d="M4,28 A23,23 0 0,1 50,28" stroke="#f59e0b" stroke-width="4" fill="none" stroke-linecap="round" stroke-dasharray="72" stroke-dashoffset="${this._arcOffset(solar, 6)}"/>
               </svg>
-              <div class="gau-val" style="color:#00f5ff">${solar.toFixed(1)}<span class="gau-unit">kW</span></div>
+              <div class="gau-val" style="color:#f59e0b">${solar.toFixed(2)}<span class="gau-unit">kW</span></div>
             </div>
 
             <div class="fs-gauge home">
@@ -431,16 +498,16 @@ class FusionSolarCard extends LitElement {
                 <path d="M4,28 A23,23 0 0,1 50,28" stroke="rgba(255,255,255,0.1)" stroke-width="4" fill="none" stroke-linecap="round"/>
                 <path d="M4,28 A23,23 0 0,1 50,28" stroke="#ff2d8f" stroke-width="4" fill="none" stroke-linecap="round" stroke-dasharray="72" stroke-dashoffset="${this._arcOffset(house, 5)}"/>
               </svg>
-              <div class="gau-val" style="color:#ff2d8f">${house.toFixed(1)}<span class="gau-unit">kW</span></div>
+              <div class="gau-val" style="color:#ff2d8f">${house.toFixed(2)}<span class="gau-unit">kW</span></div>
             </div>
 
             <div class="fs-gauge grid">
               <div class="gau-lbl">Grid</div>
               <svg class="gau-arc" width="54" height="30" viewBox="0 0 54 30">
                 <path d="M4,28 A23,23 0 0,1 50,28" stroke="rgba(255,255,255,0.1)" stroke-width="4" fill="none" stroke-linecap="round"/>
-                <path d="M4,28 A23,23 0 0,1 50,28" stroke="#b4ff39" stroke-width="4" fill="none" stroke-linecap="round" stroke-dasharray="72" stroke-dashoffset="${this._arcOffset(grid, 4)}"/>
+                <path d="M4,28 A23,23 0 0,1 50,28" stroke="#f97316" stroke-width="4" fill="none" stroke-linecap="round" stroke-dasharray="72" stroke-dashoffset="${this._arcOffset(grid, 4)}"/>
               </svg>
-              <div class="gau-val" style="color:#b4ff39">${grid.toFixed(1)}<span class="gau-unit">kW</span></div>
+              <div class="gau-val" style="color:#f97316">${grid.toFixed(2)}<span class="gau-unit">kW</span></div>
             </div>
 
             ${batSoc !== null ? html`
@@ -464,9 +531,9 @@ class FusionSolarCard extends LitElement {
             </div>
             <div class="fs-chart-area">
               <div class="fs-legend">
-                <span class="fs-leg-item"><span class="fs-leg-dot" style="background:#00f5ff"></span>PV production</span>
+                <span class="fs-leg-item"><span class="fs-leg-dot" style="background:#f59e0b"></span>PV production</span>
                 <span class="fs-leg-item"><span class="fs-leg-dot" style="background:#ff2d8f"></span>Consumption</span>
-                <span class="fs-leg-item"><span class="fs-leg-dot" style="background:#b4ff39"></span>Grid export</span>
+                <span class="fs-leg-item"><span class="fs-leg-dot" style="background:#f97316"></span>Grid export</span>
               </div>
               <div class="fs-chart-canvas-wrap">
                 <canvas id="fs-chart" role="img" aria-label="Energy history chart"></canvas>
@@ -475,9 +542,9 @@ class FusionSolarCard extends LitElement {
 
             <!-- Summary -->
             <div class="fs-summary">
-              ${sumGen  !== null ? html`<div class="fs-sum-card"><div class="fs-sum-lbl">Generated</div><div class="fs-sum-val" style="color:#00f5ff">${sumGen}<span class="fs-sum-unit">kWh</span></div></div>` : ''}
+              ${sumGen  !== null ? html`<div class="fs-sum-card"><div class="fs-sum-lbl">Generated</div><div class="fs-sum-val" style="color:#f59e0b">${sumGen}<span class="fs-sum-unit">kWh</span></div></div>` : ''}
               ${sumCons !== null ? html`<div class="fs-sum-card"><div class="fs-sum-lbl">Consumed</div><div class="fs-sum-val" style="color:#ff2d8f">${sumCons}<span class="fs-sum-unit">kWh</span></div></div>` : ''}
-              ${sumExp  !== null ? html`<div class="fs-sum-card"><div class="fs-sum-lbl">Exported</div><div class="fs-sum-val" style="color:#b4ff39">${sumExp}<span class="fs-sum-unit">kWh</span></div></div>` : ''}
+              ${sumExp  !== null ? html`<div class="fs-sum-card"><div class="fs-sum-lbl">Exported</div><div class="fs-sum-val" style="color:#f97316">${sumExp}<span class="fs-sum-unit">kWh</span></div></div>` : ''}
             </div>
           </div>
 
@@ -566,27 +633,27 @@ class FusionSolarCard extends LitElement {
 
     const content = html`
       ${hasPV ? html`
-        ${this._subLbl('PV Strings', '#00f5ff')}
+        ${this._subLbl('PV Strings', '#22c55e')}
         <div class="det-grid">
-          ${this._numTile('PV1 Power',   cfg.pv1_power_entity,   '#00f5ff', 'kW',  '⚡')}
-          ${this._numTile('PV2 Power',   cfg.pv2_power_entity,   '#00f5ff', 'kW',  '⚡')}
-          ${this._numTile('PV1 Voltage', cfg.pv1_voltage_entity, '#00f5ff', 'V',   '〰')}
-          ${this._numTile('PV2 Voltage', cfg.pv2_voltage_entity, '#00f5ff', 'V',   '〰')}
-          ${this._numTile('PV1 Current', cfg.pv1_current_entity, '#00f5ff', 'A',   '〜')}
-          ${this._numTile('PV2 Current', cfg.pv2_current_entity, '#00f5ff', 'A',   '〜')}
+          ${this._numTile('PV1 Power',   cfg.pv1_power_entity,   '#22c55e', 'kW',  '⚡')}
+          ${this._numTile('PV2 Power',   cfg.pv2_power_entity,   '#22c55e', 'kW',  '⚡')}
+          ${this._numTile('PV1 Voltage', cfg.pv1_voltage_entity, '#22c55e', 'V',   '〰')}
+          ${this._numTile('PV2 Voltage', cfg.pv2_voltage_entity, '#22c55e', 'V',   '〰')}
+          ${this._numTile('PV1 Current', cfg.pv1_current_entity, '#22c55e', 'A',   '〜')}
+          ${this._numTile('PV2 Current', cfg.pv2_current_entity, '#22c55e', 'A',   '〜')}
         </div>
       ` : ''}
       ${hasGrd ? html`
-        ${this._subLbl('Grid Connection', '#b4ff39')}
+        ${this._subLbl('Grid Connection', '#f97316')}
         <div class="det-grid">
-          ${this._numTile('Phase A Voltage',       cfg.phase_a_voltage_entity,      '#b4ff39','V',   '⚡')}
-          ${this._numTile('Phase B Voltage',       cfg.phase_b_voltage_entity,      '#b4ff39','V',   '⚡')}
-          ${this._numTile('Phase C Voltage',       cfg.phase_c_voltage_entity,      '#b4ff39','V',   '⚡')}
-          ${this._numTile('Grid Current',          cfg.grid_current_entity,         '#b4ff39','A',   '〜')}
-          ${this._numTile('Phase B Current',       cfg.phase_b_current_entity,      '#b4ff39','A',   '〜')}
-          ${this._numTile('Phase C Current',       cfg.phase_c_current_entity,      '#b4ff39','A',   '〜')}
-          ${this._numTile('Grid Frequency',        cfg.grid_frequency_entity,       '#b4ff39','Hz',  '∿')}
-          ${this._numTile('Power Factor',          cfg.power_factor_entity,         '#b4ff39','',    'φ')}
+          ${this._numTile('Phase A Voltage',       cfg.phase_a_voltage_entity,      '#f97316','V',   '⚡')}
+          ${this._numTile('Phase B Voltage',       cfg.phase_b_voltage_entity,      '#f97316','V',   '⚡')}
+          ${this._numTile('Phase C Voltage',       cfg.phase_c_voltage_entity,      '#f97316','V',   '⚡')}
+          ${this._numTile('Grid Current',          cfg.grid_current_entity,         '#f97316','A',   '〜')}
+          ${this._numTile('Phase B Current',       cfg.phase_b_current_entity,      '#f97316','A',   '〜')}
+          ${this._numTile('Phase C Current',       cfg.phase_c_current_entity,      '#f97316','A',   '〜')}
+          ${this._numTile('Grid Frequency',        cfg.grid_frequency_entity,       '#f97316','Hz',  '∿')}
+          ${this._numTile('Power Factor',          cfg.power_factor_entity,         '#f97316','',    'φ')}
           ${this._numTile('Insulation Res.',       cfg.insulation_resistance_entity,'#f59e0b','MΩ',  'Ω')}
         </div>
       ` : ''}
@@ -609,7 +676,7 @@ class FusionSolarCard extends LitElement {
 
     const content = html`
       ${hasCons ? html`
-        ${this._subLbl('Grid Consumption', '#b4ff39')}
+        ${this._subLbl('Grid Consumption', '#f97316')}
         <div class="det-grid">
           ${this._kwTile('Today',      cfg.grid_consumption_today_entity,    'cg', '📅')}
           ${this._kwTile('This Week',  cfg.grid_consumption_week_entity,     'cg', '📆')}
@@ -639,7 +706,7 @@ class FusionSolarCard extends LitElement {
         </div>
       ` : ''}
     `;
-    return this._detSection('grid', '#b4ff39', 'Grid & House Load', content);
+    return this._detSection('grid', '#f97316', 'Grid & House Load', content);
   }
 
   _renderPanelsSection() {
@@ -651,29 +718,29 @@ class FusionSolarCard extends LitElement {
 
     const content = html`
       ${hasFore ? html`
-        ${this._subLbl('Live & Forecast', '#00f5ff')}
+        ${this._subLbl('Live & Forecast', '#22c55e')}
         <div class="det-grid">
-          ${this._numTile('Production Power', cfg.panel_production_power_entity, '#00f5ff', 'kW', '☀️')}
+          ${this._numTile('Production Power', cfg.panel_production_power_entity, '#22c55e', 'kW', '☀️')}
           ${cfg.pv_forecasted_today_entity ? html`
-            <div class="det-tile" style="--tc:#00f5ff">
+            <div class="det-tile" style="--tc:#22c55e">
               <span class="dt-icon">🔮</span>
               <div>
                 <div class="dt-lbl">Forecasted Today</div>
-                <div class="dt-val" style="color:#00f5ff">${sf(this.hass, cfg.pv_forecasted_today_entity, 2)}<span class="dt-unit">kWh</span></div>
+                <div class="dt-val" style="color:#22c55e">${sf(this.hass, cfg.pv_forecasted_today_entity, 2)}<span class="dt-unit">kWh</span></div>
               </div>
             </div>` : ''}
           ${cfg.pv_remaining_today_entity ? html`
-            <div class="det-tile" style="--tc:#00f5ff">
+            <div class="det-tile" style="--tc:#22c55e">
               <span class="dt-icon">⏳</span>
               <div>
                 <div class="dt-lbl">Remaining Today</div>
-                <div class="dt-val" style="color:#00f5ff">${sf(this.hass, cfg.pv_remaining_today_entity, 2)}<span class="dt-unit">kWh</span></div>
+                <div class="dt-val" style="color:#22c55e">${sf(this.hass, cfg.pv_remaining_today_entity, 2)}<span class="dt-unit">kWh</span></div>
               </div>
             </div>` : ''}
         </div>
       ` : ''}
       ${hasProd ? html`
-        ${this._subLbl('Production History', '#00f5ff')}
+        ${this._subLbl('Production History', '#22c55e')}
         <div class="det-grid">
           ${this._kwTile('Today',      cfg.panel_production_today_entity,    'cs', '📅')}
           ${this._kwTile('This Week',  cfg.panel_production_week_entity,     'cs', '📆')}
@@ -693,7 +760,7 @@ class FusionSolarCard extends LitElement {
         </div>
       ` : ''}
     `;
-    return this._detSection('panels', '#00f5ff', 'Panel Production & Forecast', content);
+    return this._detSection('panels', '#22c55e', 'Panel Production & Forecast', content);
   }
 
   _renderRatiosSection() {
@@ -800,20 +867,38 @@ class FusionSolarCard extends LitElement {
       @keyframes fspulse { 0%,100%{opacity:1} 50%{opacity:0.25} }
 
       /* ── Flow diagram ── */
-      .fs-flow { position:relative; height:260px; }
-      .fs-flow svg { width:100%; height:100%; }
-      .fp      { stroke-dasharray:8 4; animation:fsdash 1.6s linear infinite; }
-      .fp-slow { animation-duration:2.5s; }
-      .fp-idle { animation:none; opacity:0.18; }
-      @keyframes fsdash { to { stroke-dashoffset:-24; } }
+      .fs-flow { position:relative; height:440px; }
+      .fs-flow svg { width:100%; height:100%; overflow:visible; }
+      .fp      { stroke-dasharray:8 5; animation:fsdash 1.4s linear infinite; }
+      .fp-slow { stroke-dasharray:7 6; animation:fsdash 2.4s linear infinite; }
+      .fp-idle { animation:none !important; opacity:0.07 !important; }
+      @keyframes fsdash { to { stroke-dashoffset:-22; } }
+
+      /* ── Node ring glow — outer ring only, CSS drop-shadow pulses with opacity ── */
+      @keyframes fsRingSun  { 0%,100%{stroke-opacity:.28;filter:drop-shadow(0 0 7px #f59e0b) drop-shadow(0 0 16px #f59e0b);} 50%{stroke-opacity:.05;filter:drop-shadow(0 0 2px #f59e0b);} }
+      @keyframes fsRingPV   { 0%,100%{stroke-opacity:.28;filter:drop-shadow(0 0 7px #22c55e) drop-shadow(0 0 18px #22c55e);} 50%{stroke-opacity:.05;filter:drop-shadow(0 0 2px #22c55e);} }
+      @keyframes fsRingInv  { 0%,100%{stroke-opacity:.30;filter:drop-shadow(0 0 8px #00f5ff) drop-shadow(0 0 20px #00f5ff);} 50%{stroke-opacity:.05;filter:drop-shadow(0 0 2px #00f5ff);} }
+      @keyframes fsRingGrid { 0%,100%{stroke-opacity:.28;filter:drop-shadow(0 0 7px #f97316) drop-shadow(0 0 18px #f97316);} 50%{stroke-opacity:.05;filter:drop-shadow(0 0 2px #f97316);} }
+
+      .fs-ring-sun  { animation:fsRingSun  2s   ease-in-out infinite; }
+      .fs-ring-pv   { animation:fsRingPV   2.4s ease-in-out infinite; }
+      .fs-ring-inv  { animation:fsRingInv  1.9s ease-in-out infinite; }
+      .fs-ring-grid { animation:fsRingGrid 2.7s ease-in-out infinite; }
+      .fs-ring-off  { animation:none !important; stroke-opacity:.05 !important; filter:none !important; }
+
+      /* Static node border soft glow */
+      .fs-glow-sol  { filter:drop-shadow(0 0 5px #f59e0b); }
+      .fs-glow-pv   { filter:drop-shadow(0 0 5px #22c55e); }
+      .fs-glow-inv  { filter:drop-shadow(0 0 4px #00f5ff); }
+      .fs-glow-grid { filter:drop-shadow(0 0 5px #f97316); }
 
       /* ── Arc gauges ── */
       .fs-gauges { display:grid; grid-template-columns:repeat(4,1fr); gap:7px; margin-top:1rem; }
       .fs-gauge { background:rgba(3,8,20,0.52); backdrop-filter:blur(14px); border:1px solid rgba(0,245,255,0.07); border-radius:11px; padding:0.6rem 0.3rem 0.5rem; text-align:center; position:relative; overflow:hidden; box-shadow:0 2px 10px rgba(0,0,0,0.25); }
       .fs-gauge::after { content:''; position:absolute; top:0; left:0; right:0; height:2px; border-radius:11px 11px 0 0; }
-      .fs-gauge.solar::after { background:#00f5ff; box-shadow:0 0 7px #00f5ff; }
+      .fs-gauge.solar::after { background:#f59e0b; box-shadow:0 0 7px #f59e0b; }
       .fs-gauge.home::after  { background:#ff2d8f; box-shadow:0 0 7px #ff2d8f; }
-      .fs-gauge.grid::after  { background:#b4ff39; box-shadow:0 0 7px #b4ff39; }
+      .fs-gauge.grid::after  { background:#f97316; box-shadow:0 0 7px #f97316; }
       .fs-gauge.bat::after   { background:#8b5cf6; box-shadow:0 0 7px #8b5cf6; }
       .gau-lbl  { font-size:9px; color:#6a8aaa; text-transform:uppercase; letter-spacing:0.07em; margin-bottom:4px; }
       .gau-arc  { display:block; margin:0 auto 3px; }
@@ -871,7 +956,7 @@ class FusionSolarCard extends LitElement {
       .det-tile::before { content:''; position:absolute; top:0; left:0; right:0; height:1.5px; border-radius:8px 8px 0 0; background:var(--tc,#94a3b8); box-shadow:0 0 4px var(--tc,#94a3b8); }
 
       /* color class aliases for kwTile */
-      --c-cs: #00f5ff; --c-cg: #b4ff39; --c-ch: #ff2d8f; --c-cb: #8b5cf6; --c-cw: #f59e0b;
+      --c-cs: #22c55e; --c-cg: #f97316; --c-ch: #ff2d8f; --c-cb: #8b5cf6; --c-cw: #f59e0b;
 
       .dt-lbl  { font-size:8px; color:#6a8aaa; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
       .dt-val  { font-family:'DM Mono',monospace; font-size:13px; font-weight:500; line-height:1; }
@@ -884,13 +969,14 @@ class FusionSolarCard extends LitElement {
       /* ── Responsive ── */
       @media (max-width: 480px) {
         .fs-gauges { grid-template-columns: repeat(2,1fr); }
-        .fs-flow   { height:210px; }
+        .fs-flow   { height:380px; }
         .fs-summary{ grid-template-columns: repeat(3,1fr); }
         .det-grid  { grid-template-columns: 1fr 1fr; }
         .fs-card   { padding:0.9rem; border-radius:16px; }
       }
       @media (max-width: 340px) {
         .fs-gauges { grid-template-columns: repeat(2,1fr); }
+        .fs-flow   { height:340px; }
         .det-grid  { grid-template-columns: 1fr; }
         .fs-summary{ grid-template-columns: 1fr 1fr; }
       }
