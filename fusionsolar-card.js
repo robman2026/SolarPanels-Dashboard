@@ -19,7 +19,7 @@
  *       Self-Consumption Ratios · Diagnostics
  */
 
-const CARD_VERSION = '1.1.0';
+const CARD_VERSION = '1.2.0';
 
 // ── LitElement bootstrap (same pattern as all robman2026 cards) ──────────────
 const LitElement = Object.getPrototypeOf(customElements.get('ha-panel-lovelace'));
@@ -194,30 +194,41 @@ class FusionSolarCard extends LitElement {
     let labels, solar, cons, exp;
 
     if (r === 'day') {
-      labels = ['6h','7h','8h','9h','10h','11h','12h','13h','14h','15h','16h','17h','18h','19h'];
-      const todayMax = sn(hass, cfg.production_today_entity, 0);
-      const curve    = [0,0.01,0.08,0.18,0.30,0.38,0.44,0.42,0.37,0.29,0.20,0.12,0.05,0.01];
-      solar = curve.map(v => +(v * todayMax * 14).toFixed(2));
-      const cMax = sn(hass, cfg.consumption_today_entity, 0);
-      cons  = curve.map(v => +(v * cMax * 8 + cMax * 0.03).toFixed(2));
-      const eMax = sn(hass, cfg.export_today_entity, 0);
-      exp   = curve.map(v => +(v * eMax * 14).toFixed(2));
+      // Day view: we only have running kWh totals from FusionSolar, not hourly history.
+      // We show the current live kW power as a single honest bar so the scale is correct.
+      // Labels = today summary periods
+      labels = ['Live now', 'Today so far'];
+
+      const liveSolar = sn(hass, cfg.solar_power_entity,  0);
+      const liveCons  = sn(hass, cfg.house_power_entity,  0);
+      const liveExp   = sn(hass, cfg.grid_power_entity,   0);
+
+      const genToday  = sn(hass, cfg.production_today_entity,  0);
+      const consToday = sn(hass, cfg.consumption_today_entity, 0);
+      const expToday  = sn(hass, cfg.export_today_entity,      0);
+
+      // First point = live kW, second point = today's kWh total
+      // Both datasets share the same axis — kW live / kWh today side by side
+      solar = [liveSolar, genToday];
+      cons  = [liveCons,  consToday];
+      exp   = [liveExp,   expToday];
+
     } else if (r === 'week') {
       labels = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
       const w  = sn(hass, cfg.production_week_entity, 0);
-      solar    = [0.13,0.16,0.09,0.15,0.17,0.18,0.12].map(v => +(v * w).toFixed(1));
+      solar    = [0.13,0.16,0.09,0.15,0.17,0.18,0.12].map(v => +(v * w).toFixed(2));
       const cw = sn(hass, cfg.consumption_week_entity, 0);
-      cons     = [0.14,0.17,0.12,0.15,0.15,0.16,0.11].map(v => +(v * cw).toFixed(1));
+      cons     = [0.14,0.17,0.12,0.15,0.15,0.16,0.11].map(v => +(v * cw).toFixed(2));
       const ew = sn(hass, cfg.export_week_entity, 0);
-      exp      = [0.12,0.16,0.06,0.14,0.18,0.20,0.14].map(v => +(v * ew).toFixed(1));
+      exp      = [0.12,0.16,0.06,0.14,0.18,0.20,0.14].map(v => +(v * ew).toFixed(2));
     } else {
       labels = ['Week 1','Week 2','Week 3','Week 4'];
       const m  = sn(hass, cfg.production_month_entity, 0);
-      solar    = [0.22,0.28,0.21,0.29].map(v => +(v * m).toFixed(1));
+      solar    = [0.22,0.28,0.21,0.29].map(v => +(v * m).toFixed(2));
       const cm = sn(hass, cfg.consumption_month_entity, 0);
-      cons     = [0.23,0.26,0.23,0.28].map(v => +(v * cm).toFixed(1));
+      cons     = [0.23,0.26,0.23,0.28].map(v => +(v * cm).toFixed(2));
       const em = sn(hass, cfg.export_month_entity, 0);
-      exp      = [0.20,0.30,0.18,0.32].map(v => +(v * em).toFixed(1));
+      exp      = [0.20,0.30,0.18,0.32].map(v => +(v * em).toFixed(2));
     }
     return { labels, solar, cons, exp, r };
   }
@@ -235,9 +246,9 @@ class FusionSolarCard extends LitElement {
       data: {
         labels,
         datasets: [
-          { label:'PV production', data:solar, borderColor:'#00e676', backgroundColor:'rgba(245,158,11,0.07)', fill:true, tension:0.4, pointRadius:3, pointBackgroundColor:'#00e676', borderWidth:2 },
-          { label:'Consumption',   data:cons,  borderColor:'#ff2d8f', backgroundColor:'transparent',           fill:false,tension:0.4, pointRadius:3, pointBackgroundColor:'#ff2d8f', borderWidth:2, borderDash:[5,3] },
-          { label:'Grid export',   data:exp,   borderColor:'#00e5ff', backgroundColor:'rgba(249,115,22,0.06)', fill:true, tension:0.4, pointRadius:3, pointBackgroundColor:'#00e5ff', borderWidth:2 },
+          { label:'PV production', data:solar, borderColor:'#00e676', backgroundColor:'rgba(0,230,118,0.07)', fill:true, tension:0.4, pointRadius:4, pointBackgroundColor:'#00e676', borderWidth:2 },
+          { label:'Consumption',   data:cons,  borderColor:'#ff2d8f', backgroundColor:'transparent',           fill:false,tension:0.4, pointRadius:4, pointBackgroundColor:'#ff2d8f', borderWidth:2, borderDash:[5,3] },
+          { label:'Grid export',   data:exp,   borderColor:'#00e5ff', backgroundColor:'rgba(0,229,255,0.06)', fill:true, tension:0.4, pointRadius:4, pointBackgroundColor:'#00e5ff', borderWidth:2 },
         ],
       },
       options: {
@@ -251,12 +262,19 @@ class FusionSolarCard extends LitElement {
             titleFont:{ family:'DM Mono,monospace', size:10 },
             bodyFont: { family:'DM Mono,monospace', size:11 },
             padding:10,
-            callbacks: { label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y} ${r==='day'?'kW':'kWh'}` },
+            callbacks: {
+              label: ctx => {
+                const unit = r === 'day'
+                  ? (ctx.dataIndex === 0 ? 'kW live' : 'kWh today')
+                  : (r === 'week' ? 'kWh' : 'kWh');
+                return ` ${ctx.dataset.label}: ${ctx.parsed.y} ${unit}`;
+              },
+            },
           },
         },
         scales: {
           x: { grid:{ color:'rgba(255,255,255,0.05)' }, ticks:{ font:{ size:9 }, color:'#5a7090', maxRotation:0 } },
-          y: { grid:{ color:'rgba(255,255,255,0.05)' }, ticks:{ font:{ size:9 }, color:'#5a7090', callback: v => v+(r==='day'?'kW':'kWh') } },
+          y: { grid:{ color:'rgba(255,255,255,0.05)' }, ticks:{ font:{ size:9 }, color:'#5a7090', callback: v => v+(r==='week'||r==='month'?'kWh':'') } },
         },
       },
     });
@@ -487,9 +505,9 @@ class FusionSolarCard extends LitElement {
               <div class="gau-lbl">Solar</div>
               <svg class="gau-arc" width="54" height="30" viewBox="0 0 54 30">
                 <path d="M4,28 A23,23 0 0,1 50,28" stroke="rgba(255,255,255,0.1)" stroke-width="4" fill="none" stroke-linecap="round"/>
-                <path d="M4,28 A23,23 0 0,1 50,28" stroke="#f59e0b" stroke-width="4" fill="none" stroke-linecap="round" stroke-dasharray="72" stroke-dashoffset="${this._arcOffset(solar, 6)}"/>
+                <path d="M4,28 A23,23 0 0,1 50,28" stroke="#00e676" stroke-width="4" fill="none" stroke-linecap="round" stroke-dasharray="72" stroke-dashoffset="${this._arcOffset(solar, 6)}"/>
               </svg>
-              <div class="gau-val" style="color:#f59e0b">${solar.toFixed(2)}<span class="gau-unit">kW</span></div>
+              <div class="gau-val" style="color:#00e676">${solar.toFixed(2)}<span class="gau-unit">kW</span></div>
             </div>
 
             <div class="fs-gauge home">
@@ -505,7 +523,7 @@ class FusionSolarCard extends LitElement {
               <div class="gau-lbl">Grid</div>
               <svg class="gau-arc" width="54" height="30" viewBox="0 0 54 30">
                 <path d="M4,28 A23,23 0 0,1 50,28" stroke="rgba(255,255,255,0.1)" stroke-width="4" fill="none" stroke-linecap="round"/>
-                <path d="M4,28 A23,23 0 0,1 50,28" stroke="#f97316" stroke-width="4" fill="none" stroke-linecap="round" stroke-dasharray="72" stroke-dashoffset="${this._arcOffset(grid, 4)}"/>
+                <path d="M4,28 A23,23 0 0,1 50,28" stroke="#ff1744" stroke-width="4" fill="none" stroke-linecap="round" stroke-dasharray="72" stroke-dashoffset="${this._arcOffset(grid, 4)}"/>
               </svg>
               <div class="gau-val" style="color:#ff1744">${grid.toFixed(2)}<span class="gau-unit">kW</span></div>
             </div>
@@ -534,6 +552,7 @@ class FusionSolarCard extends LitElement {
                 <span class="fs-leg-item"><span class="fs-leg-dot" style="background:#00e676"></span>PV production</span>
                 <span class="fs-leg-item"><span class="fs-leg-dot" style="background:#ff2d8f"></span>Consumption</span>
                 <span class="fs-leg-item"><span class="fs-leg-dot" style="background:#00e5ff"></span>Grid export</span>
+                ${this._chartRange === 'day' ? html`<span style="font-size:9px;color:#6a8aaa;margin-left:4px">· Live kW &amp; Today kWh</span>` : ''}
               </div>
               <div class="fs-chart-canvas-wrap">
                 <canvas id="fs-chart" role="img" aria-label="Energy history chart"></canvas>
@@ -896,7 +915,7 @@ class FusionSolarCard extends LitElement {
       .fs-gauges { display:grid; grid-template-columns:repeat(4,1fr); gap:7px; margin-top:1rem; }
       .fs-gauge { background:rgba(3,8,20,0.52); backdrop-filter:blur(14px); border:1px solid rgba(0,245,255,0.07); border-radius:11px; padding:0.6rem 0.3rem 0.5rem; text-align:center; position:relative; overflow:hidden; box-shadow:0 2px 10px rgba(0,0,0,0.25); }
       .fs-gauge::after { content:''; position:absolute; top:0; left:0; right:0; height:2px; border-radius:11px 11px 0 0; }
-      .fs-gauge.solar::after { background:#f59e0b; box-shadow:0 0 7px #f59e0b; }
+      .fs-gauge.solar::after { background:#00e676; box-shadow:0 0 7px #00e676; }
       .fs-gauge.home::after  { background:#ff2d8f; box-shadow:0 0 7px #ff2d8f; }
       .fs-gauge.grid::after  { background:#ff1744; box-shadow:0 0 7px #ff1744; }
       .fs-gauge.bat::after   { background:#8b5cf6; box-shadow:0 0 7px #8b5cf6; }
@@ -956,7 +975,7 @@ class FusionSolarCard extends LitElement {
       .det-tile::before { content:''; position:absolute; top:0; left:0; right:0; height:1.5px; border-radius:8px 8px 0 0; background:var(--tc,#94a3b8); box-shadow:0 0 4px var(--tc,#94a3b8); }
 
       /* color class aliases for kwTile */
-      --c-cs: #22c55e; --c-cg: #f97316; --c-ch: #ff2d8f; --c-cb: #8b5cf6; --c-cw: #f59e0b;
+      --c-cs: #00e676; --c-cg: #ff1744; --c-ch: #ff2d8f; --c-cb: #8b5cf6; --c-cw: #f59e0b;
 
       .dt-lbl  { font-size:8px; color:#6a8aaa; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
       .dt-val  { font-family:'DM Mono',monospace; font-size:13px; font-weight:500; line-height:1; }
