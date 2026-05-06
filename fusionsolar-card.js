@@ -19,7 +19,7 @@
  *       Self-Consumption Ratios · Diagnostics
  */
 
-const CARD_VERSION = '1.3.0';
+const CARD_VERSION = '1.4.0';
 
 // ── LitElement bootstrap (same pattern as all robman2026 cards) ──────────────
 const LitElement = Object.getPrototypeOf(customElements.get('ha-panel-lovelace'));
@@ -303,7 +303,7 @@ class FusionSolarCard extends LitElement {
         end_time:   end.toISOString(),
         period,
         statistic_ids: statIds,
-        types: ['change', 'state'],
+        types: ['state', 'sum', 'change'],
       });
 
       this._statsData = this._processStats(result, r, start, end, cfg);
@@ -316,58 +316,87 @@ class FusionSolarCard extends LitElement {
 
   // ── Process recorder statistics into chart + donut data ───────────────────
   _processStats(result, r, start, end, cfg) {
-    const CIRC = 219.9;
 
-    const getChanges = (entityId) => {
+    // For accumulating energy sensors (kWh totals that reset daily like FusionSolar),
+    // we MUST use state values and compute per-hour/day/month deltas ourselves.
+    // Using 'change' directly is unreliable because daily-reset sensors have negative
+    // changes at midnight and wildly wrong values for past periods.
+    const getDeltas = (entityId) => {
       if (!entityId || !result[entityId]) return [];
-      return result[entityId].map(s => Math.max(0, s.change ?? (s.state ?? 0)));
+      const pts = result[entityId];
+      if (!pts.length) return [];
+
+      // Use 'state' if available, else fall back to 'sum'
+      const val = (pt) => {
+        const v = pt.state ?? pt.sum ?? pt.change ?? 0;
+        return parseFloat(v) || 0;
+      };
+
+      const deltas = [];
+      for (let i = 0; i < pts.length; i++) {
+        if (i === 0) {
+          // First point: use change if available and positive, else 0
+          const c = pts[i].change ?? 0;
+          deltas.push(Math.max(0, parseFloat(c) || 0));
+        } else {
+          // Delta between consecutive states — always non-negative
+          const delta = val(pts[i]) - val(pts[i-1]);
+          deltas.push(Math.max(0, delta));
+        }
+      }
+      return deltas;
     };
 
-    const solar   = getChanges(cfg.production_today_entity);
-    const cons    = getChanges(cfg.consumption_today_entity);
-    const exp     = getChanges(cfg.export_today_entity);
-    const selfCons= getChanges(cfg.panel_production_consumption_today_entity);
-    const gridCons= getChanges(cfg.grid_consumption_today_entity);
+    const solar    = getDeltas(cfg.production_today_entity);
+    const cons     = getDeltas(cfg.consumption_today_entity);
+    const exp      = getDeltas(cfg.export_today_entity);
+    const selfCons = getDeltas(cfg.panel_production_consumption_today_entity);
+    const gridCons = getDeltas(cfg.grid_consumption_today_entity);
 
-    // Build time labels
-    let labels;
+    // Build labels aligned to actual stat timestamps
+    // HA returns one entry per period bucket — align by index to expected buckets
     if (r === 'day') {
-      labels = Array.from({length:24}, (_,i) => String(i).padStart(2,'0')+'h');
-      // Pad arrays to 24 entries
-      const pad = (arr) => { const a=[...arr]; while(a.length<24) a.push(0); return a.slice(0,24); };
+      // 24 hourly buckets: label as 01h…24h (end of each hour)
+      const labels = Array.from({length:24}, (_,i) => String(i+1).padStart(2,'0')+'h');
+      const pad = (arr) => {
+        const a = [...arr];
+        while (a.length < 24) a.push(0);
+        return a.slice(0, 24).map(v => +parseFloat(v).toFixed(2));
+      };
       return {
         labels, r,
-        solar:  pad(solar).map(v=>+v.toFixed(2)),
-        cons:   pad(cons).map(v=>+v.toFixed(2)),
-        exp:    pad(exp).map(v=>+v.toFixed(2)),
+        solar: pad(solar), cons: pad(cons), exp: pad(exp),
         chartType: 'line', yUnit: 'kWh',
         ...this._donutDataFromArrays(solar, selfCons, cons, gridCons, 'kWh'),
       };
     }
 
     if (r === 'month') {
-      // day labels 01–31
-      const days = Math.round((end - start) / 86400000) + 1;
-      labels = Array.from({length: days}, (_,i) => String(i+1).padStart(2,'0'));
-      const pad = (arr) => { const a=[...arr]; while(a.length<days) a.push(0); return a.slice(0,days); };
+      const days = new Date(end.getFullYear(), end.getMonth()+1, 0).getDate();
+      const labels = Array.from({length:days}, (_,i) => String(i+1).padStart(2,'0'));
+      const pad = (arr) => {
+        const a = [...arr];
+        while (a.length < days) a.push(0);
+        return a.slice(0, days).map(v => +parseFloat(v).toFixed(2));
+      };
       return {
         labels, r,
-        solar: pad(solar).map(v=>+v.toFixed(2)),
-        cons:  pad(cons).map(v=>+v.toFixed(2)),
-        exp:   pad(exp).map(v=>+v.toFixed(2)),
+        solar: pad(solar), cons: pad(cons), exp: pad(exp),
         chartType: 'bar', yUnit: 'kWh',
         ...this._donutDataFromArrays(solar, selfCons, cons, gridCons, 'kWh'),
       };
     }
 
-    // year — monthly labels
-    labels = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const pad12 = (arr) => { const a=[...arr]; while(a.length<12) a.push(0); return a.slice(0,12); };
+    // year
+    const labels = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const pad12 = (arr) => {
+      const a = [...arr];
+      while (a.length < 12) a.push(0);
+      return a.slice(0, 12).map(v => +parseFloat(v).toFixed(2));
+    };
     return {
       labels, r,
-      solar: pad12(solar).map(v=>+v.toFixed(2)),
-      cons:  pad12(cons).map(v=>+v.toFixed(2)),
-      exp:   pad12(exp).map(v=>+v.toFixed(2)),
+      solar: pad12(solar), cons: pad12(cons), exp: pad12(exp),
       chartType: 'bar', yUnit: 'kWh',
       ...this._donutDataFromArrays(solar, selfCons, cons, gridCons, 'kWh'),
     };
@@ -588,10 +617,8 @@ class FusionSolarCard extends LitElement {
 
               <!-- ══ NODE: SUN (top center, 260,74) ══ -->
               <g transform="translate(260,74)">
-                <!-- Pulsing outer ring — CSS glow animation via class -->
-                <circle class="fs-ring-sun ${solar > 0 ? '' : 'fs-ring-off'}" r="50" fill="none" stroke="#f59e0b" stroke-width="1.4"/>
-                <!-- Static node circle -->
-                <circle class="fs-glow-sol" r="37" fill="rgba(245,158,11,0.10)" stroke="#f59e0b" stroke-width="1.8"/>
+                <!-- Static node circle with conditional pulse glow -->
+                <circle class="fs-glow-sol ${solar > 0 ? 'fs-pulse-sun' : ''}" r="37" fill="rgba(245,158,11,0.10)" stroke="#f59e0b" stroke-width="1.8"/>
                 <!-- Sun disc -->
                 <circle r="14" fill="#f59e0b" opacity="0.85"/>
                 <!-- Rays -->
@@ -610,8 +637,7 @@ class FusionSolarCard extends LitElement {
 
               <!-- ══ NODE: PV PANELS (mid-left, 96,268) ══ -->
               <g transform="translate(96,268)">
-                <circle class="fs-ring-pv ${solar > 0 ? '' : 'fs-ring-off'}" r="50" fill="none" stroke="#22c55e" stroke-width="1.2"/>
-                <circle class="fs-glow-pv" r="39" fill="rgba(34,197,94,0.08)" stroke="#22c55e" stroke-width="1.8"/>
+                <circle class="fs-glow-pv ${solar > 0 ? 'fs-pulse-pv' : ''}" r="39" fill="rgba(34,197,94,0.08)" stroke="#22c55e" stroke-width="1.8"/>
                 <!-- Panel cells 2×3 -->
                 <g fill="rgba(34,197,94,0.20)" stroke="#22c55e" stroke-width="0.9">
                   <rect x="-22" y="-15" width="13" height="9" rx="1.5"/>
@@ -661,8 +687,7 @@ class FusionSolarCard extends LitElement {
 
               <!-- ══ NODE: INVERTER (small, below house, 260,350) ══ -->
               <g transform="translate(260,350)">
-                <circle class="fs-ring-inv ${solar > 0 ? '' : 'fs-ring-off'}" r="32" fill="none" stroke="#00f5ff" stroke-width="1.1"/>
-                <circle class="fs-glow-inv" r="24" fill="rgba(0,245,255,0.08)" stroke="#00f5ff" stroke-width="1.5"/>
+                <circle class="fs-glow-inv ${solar > 0 ? 'fs-pulse-inv' : ''}" r="24" fill="rgba(0,245,255,0.08)" stroke="#00f5ff" stroke-width="1.5"/>
                 <!-- Box with sine wave -->
                 <rect x="-13" y="-10" width="26" height="18" rx="3" fill="rgba(0,245,255,0.12)" stroke="#00f5ff" stroke-width="0.9"/>
                 <path d="M-9,-1 Q-6,-7 -3,-1 Q0,5 3,-1 Q6,-7 9,-1" stroke="#00f5ff" stroke-width="1.3" fill="none" stroke-linecap="round" opacity="0.95"/>
@@ -673,8 +698,7 @@ class FusionSolarCard extends LitElement {
 
               <!-- ══ NODE: GRID (mid-right, 424,268) ══ -->
               <g transform="translate(424,268)">
-                <circle class="fs-ring-grid ${grid > 0.05 ? '' : 'fs-ring-off'}" r="50" fill="none" stroke="#f97316" stroke-width="1.1"/>
-                <circle class="fs-glow-grid" r="37" fill="rgba(249,115,22,0.07)" stroke="#f97316" stroke-width="1.6"/>
+                <circle class="fs-glow-grid ${grid > 0.05 ? 'fs-pulse-grid' : ''}" r="37" fill="rgba(249,115,22,0.07)" stroke="#f97316" stroke-width="1.6"/>
                 <!-- Pylon -->
                 <line x1="0"   y1="-22" x2="0"   y2="18"  stroke="#f97316" stroke-width="1.8" stroke-linecap="round" opacity="0.8"/>
                 <line x1="-17" y1="-8"  x2="17"  y2="-8"  stroke="#f97316" stroke-width="1.6" stroke-linecap="round" opacity="0.8"/>
@@ -1173,23 +1197,22 @@ class FusionSolarCard extends LitElement {
       .fp-idle { animation:none !important; opacity:0.07 !important; }
       @keyframes fsdash { to { stroke-dashoffset:-22; } }
 
-      /* ── Node ring glow — outer ring only, CSS drop-shadow pulses with opacity ── */
-      @keyframes fsRingSun  { 0%,100%{stroke-opacity:.28;filter:drop-shadow(0 0 7px #f59e0b) drop-shadow(0 0 16px #f59e0b);} 50%{stroke-opacity:.05;filter:drop-shadow(0 0 2px #f59e0b);} }
-      @keyframes fsRingPV   { 0%,100%{stroke-opacity:.28;filter:drop-shadow(0 0 7px #22c55e) drop-shadow(0 0 18px #22c55e);} 50%{stroke-opacity:.05;filter:drop-shadow(0 0 2px #22c55e);} }
-      @keyframes fsRingInv  { 0%,100%{stroke-opacity:.30;filter:drop-shadow(0 0 8px #00f5ff) drop-shadow(0 0 20px #00f5ff);} 50%{stroke-opacity:.05;filter:drop-shadow(0 0 2px #00f5ff);} }
-      @keyframes fsRingGrid { 0%,100%{stroke-opacity:.28;filter:drop-shadow(0 0 7px #f97316) drop-shadow(0 0 18px #f97316);} 50%{stroke-opacity:.05;filter:drop-shadow(0 0 2px #f97316);} }
+      /* ── Node border pulse — glow animates ON the node border circle itself ── */
+      @keyframes fsPulseSun  { 0%,100%{filter:drop-shadow(0 0 5px #f59e0b) drop-shadow(0 0 12px #f59e0b);} 50%{filter:drop-shadow(0 0 2px #f59e0b);} }
+      @keyframes fsPulsePV   { 0%,100%{filter:drop-shadow(0 0 6px #22c55e) drop-shadow(0 0 14px #22c55e);} 50%{filter:drop-shadow(0 0 2px #22c55e);} }
+      @keyframes fsPulseInv  { 0%,100%{filter:drop-shadow(0 0 6px #00f5ff) drop-shadow(0 0 14px #00f5ff);} 50%{filter:drop-shadow(0 0 2px #00f5ff);} }
+      @keyframes fsPulseGrid { 0%,100%{filter:drop-shadow(0 0 6px #f97316) drop-shadow(0 0 14px #f97316);} 50%{filter:drop-shadow(0 0 2px #f97316);} }
 
-      .fs-ring-sun  { animation:fsRingSun  2s   ease-in-out infinite; }
-      .fs-ring-pv   { animation:fsRingPV   2.4s ease-in-out infinite; }
-      .fs-ring-inv  { animation:fsRingInv  1.9s ease-in-out infinite; }
-      .fs-ring-grid { animation:fsRingGrid 2.7s ease-in-out infinite; }
-      .fs-ring-off  { animation:none !important; stroke-opacity:.05 !important; filter:none !important; }
+      .fs-pulse-sun  { animation:fsPulseSun  2s   ease-in-out infinite; }
+      .fs-pulse-pv   { animation:fsPulsePV   2.4s ease-in-out infinite; }
+      .fs-pulse-inv  { animation:fsPulseInv  1.9s ease-in-out infinite; }
+      .fs-pulse-grid { animation:fsPulseGrid 2.7s ease-in-out infinite; }
 
-      /* Static node border soft glow */
-      .fs-glow-sol  { filter:drop-shadow(0 0 5px #f59e0b); }
-      .fs-glow-pv   { filter:drop-shadow(0 0 5px #22c55e); }
-      .fs-glow-inv  { filter:drop-shadow(0 0 4px #00f5ff); }
-      .fs-glow-grid { filter:drop-shadow(0 0 5px #f97316); }
+      /* Static node border soft glow (when inactive) */
+      .fs-glow-sol  { filter:drop-shadow(0 0 3px #f59e0b); }
+      .fs-glow-pv   { filter:drop-shadow(0 0 3px #22c55e); }
+      .fs-glow-inv  { filter:drop-shadow(0 0 3px #00f5ff); }
+      .fs-glow-grid { filter:drop-shadow(0 0 3px #f97316); }
 
       /* ── Arc gauges ── */
       .fs-gauges { display:grid; grid-template-columns:repeat(4,1fr); gap:7px; margin-top:1rem; }
