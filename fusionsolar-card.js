@@ -235,9 +235,9 @@ class FusionSolarCard extends LitElement {
       data: {
         labels,
         datasets: [
-          { label:'PV production', data:solar, borderColor:'#f59e0b', backgroundColor:'rgba(245,158,11,0.07)', fill:true, tension:0.4, pointRadius:3, pointBackgroundColor:'#f59e0b', borderWidth:2 },
+          { label:'PV production', data:solar, borderColor:'#00e676', backgroundColor:'rgba(245,158,11,0.07)', fill:true, tension:0.4, pointRadius:3, pointBackgroundColor:'#00e676', borderWidth:2 },
           { label:'Consumption',   data:cons,  borderColor:'#ff2d8f', backgroundColor:'transparent',           fill:false,tension:0.4, pointRadius:3, pointBackgroundColor:'#ff2d8f', borderWidth:2, borderDash:[5,3] },
-          { label:'Grid export',   data:exp,   borderColor:'#f97316', backgroundColor:'rgba(249,115,22,0.06)', fill:true, tension:0.4, pointRadius:3, pointBackgroundColor:'#f97316', borderWidth:2 },
+          { label:'Grid export',   data:exp,   borderColor:'#00e5ff', backgroundColor:'rgba(249,115,22,0.06)', fill:true, tension:0.4, pointRadius:3, pointBackgroundColor:'#00e5ff', borderWidth:2 },
         ],
       },
       options: {
@@ -507,7 +507,7 @@ class FusionSolarCard extends LitElement {
                 <path d="M4,28 A23,23 0 0,1 50,28" stroke="rgba(255,255,255,0.1)" stroke-width="4" fill="none" stroke-linecap="round"/>
                 <path d="M4,28 A23,23 0 0,1 50,28" stroke="#f97316" stroke-width="4" fill="none" stroke-linecap="round" stroke-dasharray="72" stroke-dashoffset="${this._arcOffset(grid, 4)}"/>
               </svg>
-              <div class="gau-val" style="color:#f97316">${grid.toFixed(2)}<span class="gau-unit">kW</span></div>
+              <div class="gau-val" style="color:#ff1744">${grid.toFixed(2)}<span class="gau-unit">kW</span></div>
             </div>
 
             ${batSoc !== null ? html`
@@ -531,9 +531,9 @@ class FusionSolarCard extends LitElement {
             </div>
             <div class="fs-chart-area">
               <div class="fs-legend">
-                <span class="fs-leg-item"><span class="fs-leg-dot" style="background:#f59e0b"></span>PV production</span>
+                <span class="fs-leg-item"><span class="fs-leg-dot" style="background:#00e676"></span>PV production</span>
                 <span class="fs-leg-item"><span class="fs-leg-dot" style="background:#ff2d8f"></span>Consumption</span>
-                <span class="fs-leg-item"><span class="fs-leg-dot" style="background:#f97316"></span>Grid export</span>
+                <span class="fs-leg-item"><span class="fs-leg-dot" style="background:#00e5ff"></span>Grid export</span>
               </div>
               <div class="fs-chart-canvas-wrap">
                 <canvas id="fs-chart" role="img" aria-label="Energy history chart"></canvas>
@@ -542,9 +542,9 @@ class FusionSolarCard extends LitElement {
 
             <!-- Summary -->
             <div class="fs-summary">
-              ${sumGen  !== null ? html`<div class="fs-sum-card"><div class="fs-sum-lbl">Generated</div><div class="fs-sum-val" style="color:#f59e0b">${sumGen}<span class="fs-sum-unit">kWh</span></div></div>` : ''}
+              ${sumGen  !== null ? html`<div class="fs-sum-card"><div class="fs-sum-lbl">Generated</div><div class="fs-sum-val" style="color:#00e676">${sumGen}<span class="fs-sum-unit">kWh</span></div></div>` : ''}
               ${sumCons !== null ? html`<div class="fs-sum-card"><div class="fs-sum-lbl">Consumed</div><div class="fs-sum-val" style="color:#ff2d8f">${sumCons}<span class="fs-sum-unit">kWh</span></div></div>` : ''}
-              ${sumExp  !== null ? html`<div class="fs-sum-card"><div class="fs-sum-lbl">Exported</div><div class="fs-sum-val" style="color:#f97316">${sumExp}<span class="fs-sum-unit">kWh</span></div></div>` : ''}
+              ${sumExp  !== null ? html`<div class="fs-sum-card"><div class="fs-sum-lbl">Exported</div><div class="fs-sum-val" style="color:#00e5ff">${sumExp}<span class="fs-sum-unit">kWh</span></div></div>` : ''}
             </div>
           </div>
 
@@ -898,7 +898,7 @@ class FusionSolarCard extends LitElement {
       .fs-gauge::after { content:''; position:absolute; top:0; left:0; right:0; height:2px; border-radius:11px 11px 0 0; }
       .fs-gauge.solar::after { background:#f59e0b; box-shadow:0 0 7px #f59e0b; }
       .fs-gauge.home::after  { background:#ff2d8f; box-shadow:0 0 7px #ff2d8f; }
-      .fs-gauge.grid::after  { background:#f97316; box-shadow:0 0 7px #f97316; }
+      .fs-gauge.grid::after  { background:#ff1744; box-shadow:0 0 7px #ff1744; }
       .fs-gauge.bat::after   { background:#8b5cf6; box-shadow:0 0 7px #8b5cf6; }
       .gau-lbl  { font-size:9px; color:#6a8aaa; text-transform:uppercase; letter-spacing:0.07em; margin-bottom:4px; }
       .gau-arc  { display:block; margin:0 auto 3px; }
