@@ -19,7 +19,7 @@
  *       Self-Consumption Ratios · Diagnostics
  */
 
-const CARD_VERSION = '1.5.0';
+const CARD_VERSION = '1.7.0';
 
 // ── LitElement bootstrap (same pattern as all robman2026 cards) ──────────────
 const LitElement = Object.getPrototypeOf(customElements.get('ha-panel-lovelace'));
@@ -188,13 +188,15 @@ class FusionSolarCard extends LitElement {
     const now = new Date();
     const r = this._range;
     const o = this._offset;
+    const tz = (this.hass && this.hass.config && this.hass.config.time_zone) || undefined;
+    const opts = tz ? { timeZone: tz } : {};
     if (r === 'day') {
       const d = new Date(now); d.setDate(d.getDate() + o);
-      return d.toLocaleDateString(undefined, { day:'2-digit', month:'2-digit', year:'numeric' });
+      return d.toLocaleDateString('en-GB', { ...opts, day:'2-digit', month:'2-digit', year:'numeric' });
     }
     if (r === 'month') {
       const d = new Date(now.getFullYear(), now.getMonth() + o, 1);
-      return d.toLocaleDateString(undefined, { month:'long', year:'numeric' });
+      return d.toLocaleDateString('en-GB', { ...opts, month:'long', year:'numeric' });
     }
     if (r === 'year') {
       return String(now.getFullYear() + o);
@@ -210,9 +212,22 @@ class FusionSolarCard extends LitElement {
     let start, end;
 
     if (r === 'day') {
-      start = new Date(now); start.setDate(start.getDate() + o);
-      start.setHours(0,0,0,0);
-      end = new Date(start); end.setHours(23,59,59,999);
+      // We need to request the full local day in HA's timezone.
+      // Strategy: always request a 28-hour UTC window centred on the local date.
+      // This covers UTC+14 to UTC-12 (all possible offsets) with room to spare.
+      // The slot-placement logic in _processStats handles mapping to correct hours.
+      const localDate = new Date(now);
+      localDate.setDate(localDate.getDate() + o);
+      // Use midnight UTC of the requested day minus 14h (covers UTC+14)
+      // to midnight UTC of next day plus 14h (covers UTC-14)
+      start = new Date(Date.UTC(
+        localDate.getFullYear(), localDate.getMonth(), localDate.getDate(),
+        0, 0, 0, 0
+      ) - 14 * 3600000); // 14h before UTC midnight
+      end = new Date(Date.UTC(
+        localDate.getFullYear(), localDate.getMonth(), localDate.getDate(),
+        23, 59, 59, 999
+      ) + 14 * 3600000); // 14h after UTC end-of-day
     } else if (r === 'month') {
       start = new Date(now.getFullYear(), now.getMonth() + o, 1, 0, 0, 0, 0);
       end   = new Date(now.getFullYear(), now.getMonth() + o + 1, 0, 23, 59, 59, 999);
@@ -353,22 +368,69 @@ class FusionSolarCard extends LitElement {
     const selfCons = getDeltas(cfg.panel_production_consumption_today_entity);
     const gridCons = getDeltas(cfg.grid_consumption_today_entity);
 
+    // Get raw stat points to extract actual local-time timestamps
+    const rawPts = result[cfg.production_today_entity]
+                || result[cfg.consumption_today_entity]
+                || result[cfg.export_today_entity]
+                || [];
+
+    // ── Helper: convert a UTC ISO timestamp to the LOCAL hour in HA's timezone ──
+    // Uses hass.config.time_zone (e.g. "Europe/Bucharest") so the result is
+    // always correct regardless of what timezone the browser is set to.
+    const haTimeZone = (this.hass.config && this.hass.config.time_zone) || 'UTC';
+    const utcToLocalHour = (isoStr) => {
+      try {
+        const fmt = new Intl.DateTimeFormat('en-US', {
+          timeZone: haTimeZone,
+          hour: 'numeric',
+          hour12: false,
+        });
+        const parts = fmt.formatToParts(new Date(isoStr));
+        const h = parseInt(parts.find(p => p.type === 'hour').value, 10);
+        return h === 24 ? 0 : h; // midnight edge case
+      } catch(e) {
+        // Fallback to browser local hour if Intl fails
+        return new Date(isoStr).getHours();
+      }
+    };
+
     // Build labels aligned to actual stat timestamps
-    // HA returns one entry per period bucket — align by index to expected buckets
     if (r === 'day') {
-      // 25 labels: 00h through 24h — HA gives 24 hourly buckets (00:00–23:00),
-      // we append a 24h label with value 0 so the x-axis always reads 00h to 24h.
+      // HA returns UTC timestamps. We convert each to the HA-configured local hour
+      // so the chart always shows the correct local time regardless of browser timezone.
+      // Build a 25-slot array (00h–24h) and place each bucket at its local hour.
+      const localHourSlots = new Array(25).fill(0);
+      const consSlots      = new Array(25).fill(0);
+      const expSlots       = new Array(25).fill(0);
+
+      rawPts.forEach((pt, i) => {
+        const localHour = utcToLocalHour(pt.start);
+        if (localHour >= 0 && localHour <= 23) {
+          localHourSlots[localHour] = solar[i]    !== undefined ? +parseFloat(solar[i]).toFixed(2)    : 0;
+          consSlots[localHour]      = cons[i]     !== undefined ? +parseFloat(cons[i]).toFixed(2)     : 0;
+          expSlots[localHour]       = exp[i]      !== undefined ? +parseFloat(exp[i]).toFixed(2)      : 0;
+        }
+      });
+
+      // Also place selfCons and gridCons for donut calculation
+      const selfConsSlots = new Array(24).fill(0);
+      const gridConsSlots = new Array(24).fill(0);
+      rawPts.forEach((pt, i) => {
+        const h = utcToLocalHour(pt.start);
+        if (h >= 0 && h <= 23) {
+          selfConsSlots[h] = selfCons[i] !== undefined ? Math.max(0, parseFloat(selfCons[i])||0) : 0;
+          gridConsSlots[h] = gridCons[i] !== undefined ? Math.max(0, parseFloat(gridCons[i])||0) : 0;
+        }
+      });
+
       const labels = Array.from({length:25}, (_,i) => String(i).padStart(2,'0')+'h');
-      const pad = (arr) => {
-        const a = [...arr];
-        while (a.length < 24) a.push(0);
-        return [...a.slice(0, 24).map(v => +parseFloat(v).toFixed(2)), 0]; // 25th point = 0
-      };
       return {
         labels, r,
-        solar: pad(solar), cons: pad(cons), exp: pad(exp),
+        solar: localHourSlots,
+        cons:  consSlots,
+        exp:   expSlots,
         chartType: 'line', yUnit: 'kWh',
-        ...this._donutDataFromArrays(solar, selfCons, cons, gridCons, 'kWh'),
+        ...this._donutDataFromArrays(solar, selfConsSlots, cons, gridConsSlots, 'kWh'),
       };
     }
 
