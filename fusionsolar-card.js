@@ -19,7 +19,7 @@
  *       Self-Consumption Ratios · Diagnostics
  */
 
-const CARD_VERSION = '1.7.0';
+const CARD_VERSION = '1.8.0';
 
 // ── LitElement bootstrap (same pattern as all robman2026 cards) ──────────────
 const LitElement = Object.getPrototypeOf(customElements.get('ha-panel-lovelace'));
@@ -174,7 +174,18 @@ class FusionSolarCard extends LitElement {
     } else if (changed.has('_statsData')) {
       loadChartJs(() => this._buildChart());
     } else if (changed.has('hass') && this._chart) {
-      // Live power values changed — patch arc gauges only, no chart rebuild
+      // For today's view, refresh stats periodically so current hour stays current
+      if (this._range === 'day' && this._offset === 0) {
+        const nowMin = new Date().getMinutes();
+        // Refresh at the start of each new hour (within first 2 minutes)
+        if (nowMin <= 2 && (!this._lastHourRefresh || new Date().getHours() !== this._lastHourRefresh)) {
+          this._lastHourRefresh = new Date().getHours();
+          loadChartJs(() => this._fetchStats());
+        } else if (this._statsData && this._statsData.isToday) {
+          // Patch current hour's live value without full refetch
+          this._patchTodayLiveHour();
+        }
+      }
     }
   }
 
@@ -321,7 +332,7 @@ class FusionSolarCard extends LitElement {
         types: ['state', 'sum', 'change'],
       });
 
-      this._statsData = this._processStats(result, r, start, end, cfg);
+      this._statsData = this._processStats(result, r, start, end, cfg, new Date());
     } catch(e) {
       console.warn('[fusionsolar-card] Stats fetch failed, falling back to entity states:', e);
       this._statsData = this._fallbackData(cfg, r);
@@ -330,18 +341,18 @@ class FusionSolarCard extends LitElement {
   }
 
   // ── Process recorder statistics into chart + donut data ───────────────────
-  _processStats(result, r, start, end, cfg) {
+  _processStats(result, r, start, end, cfg, now) {
 
-    // FusionSolar energy sensors are stored as 'sum' type in HA long-term statistics.
-    // The 'sum' field is a running cumulative total since statistics started.
-    // We compute per-period energy by taking the DIFFERENCE between consecutive sum values.
-    // This is correct and consistent regardless of whether the daily sensor resets at midnight.
+    // Physical maximum per hour for this inverter — any delta exceeding this
+    // is a recorder anomaly (HA restart, sum recalculation) and must be discarded.
+    const MAX_KWH_PER_HOUR = 6.5; // slightly above 6kW to allow rounding
+
     const getDeltas = (entityId) => {
       if (!entityId || !result[entityId]) return [];
       const pts = result[entityId];
       if (!pts.length) return [];
 
-      // Prefer 'sum' (long-term stats cumulative), fall back to 'state', then 'change'
+      // Prefer 'sum' (cumulative long-term stat), fall back to 'state', then 'change'
       const val = (pt) => {
         const v = pt.sum ?? pt.state ?? pt.change ?? 0;
         return parseFloat(v) || 0;
@@ -350,13 +361,13 @@ class FusionSolarCard extends LitElement {
       const deltas = [];
       for (let i = 0; i < pts.length; i++) {
         if (i === 0) {
-          // First bucket: use change if positive, else 0 — can't compute delta without prior point
           const c = parseFloat(pts[i].change ?? 0) || 0;
-          deltas.push(Math.max(0, c));
+          // Cap at physical max — anomalous first-point values are discarded
+          deltas.push(Math.min(MAX_KWH_PER_HOUR, Math.max(0, c)));
         } else {
-          // Delta = sum[i] - sum[i-1] — always positive for accumulating sensors
           const delta = val(pts[i]) - val(pts[i-1]);
-          deltas.push(Math.max(0, delta));
+          // Cap at physical max — any delta > MAX is a recorder artefact
+          deltas.push(Math.min(MAX_KWH_PER_HOUR, Math.max(0, delta)));
         }
       }
       return deltas;
@@ -375,8 +386,6 @@ class FusionSolarCard extends LitElement {
                 || [];
 
     // ── Helper: convert a UTC ISO timestamp to the LOCAL hour in HA's timezone ──
-    // Uses hass.config.time_zone (e.g. "Europe/Bucharest") so the result is
-    // always correct regardless of what timezone the browser is set to.
     const haTimeZone = (this.hass.config && this.hass.config.time_zone) || 'UTC';
     const utcToLocalHour = (isoStr) => {
       try {
@@ -387,50 +396,98 @@ class FusionSolarCard extends LitElement {
         });
         const parts = fmt.formatToParts(new Date(isoStr));
         const h = parseInt(parts.find(p => p.type === 'hour').value, 10);
-        return h === 24 ? 0 : h; // midnight edge case
+        return h === 24 ? 0 : h;
       } catch(e) {
-        // Fallback to browser local hour if Intl fails
         return new Date(isoStr).getHours();
       }
     };
 
-    // Build labels aligned to actual stat timestamps
+    // ── Helper: get current local hour in HA timezone ──
+    const currentLocalHour = () => utcToLocalHour(new Date().toISOString());
+
+    // ── Helper: check if the requested date is today in HA timezone ──
+    const isToday = (() => {
+      try {
+        const fmt = new Intl.DateTimeFormat('en-CA', {
+          timeZone: haTimeZone,
+          year: 'numeric', month: '2-digit', day: '2-digit',
+        });
+        const todayStr  = fmt.format(now);
+        const reqDate   = new Date(now);
+        reqDate.setDate(reqDate.getDate() + this._offset);
+        const reqStr    = fmt.format(reqDate);
+        return todayStr === reqStr;
+      } catch(e) { return this._offset === 0; }
+    })();
+
+    // ── Build labels and slot data for day view ────────────────────────────
     if (r === 'day') {
-      // HA returns UTC timestamps. We convert each to the HA-configured local hour
-      // so the chart always shows the correct local time regardless of browser timezone.
-      // Build a 25-slot array (00h–24h) and place each bucket at its local hour.
-      const localHourSlots = new Array(25).fill(0);
-      const consSlots      = new Array(25).fill(0);
-      const expSlots       = new Array(25).fill(0);
-
-      rawPts.forEach((pt, i) => {
-        const localHour = utcToLocalHour(pt.start);
-        if (localHour >= 0 && localHour <= 23) {
-          localHourSlots[localHour] = solar[i]    !== undefined ? +parseFloat(solar[i]).toFixed(2)    : 0;
-          consSlots[localHour]      = cons[i]     !== undefined ? +parseFloat(cons[i]).toFixed(2)     : 0;
-          expSlots[localHour]       = exp[i]      !== undefined ? +parseFloat(exp[i]).toFixed(2)      : 0;
-        }
-      });
-
-      // Also place selfCons and gridCons for donut calculation
+      // 25 slots: 00h–24h. Each hourly bucket placed at its local hour.
+      // For today: past hours = stats deltas, current hour = live state value,
+      // future hours = null (Chart.js renders null as a gap — no dot, no line).
+      const solarSlots    = new Array(25).fill(isToday ? null : 0);
+      const consSlots     = new Array(25).fill(isToday ? null : 0);
+      const expSlots      = new Array(25).fill(isToday ? null : 0);
       const selfConsSlots = new Array(24).fill(0);
       const gridConsSlots = new Array(24).fill(0);
+
+      // Always set 24h anchor to 0
+      solarSlots[24] = 0;
+      consSlots[24]  = 0;
+      expSlots[24]   = 0;
+
+      // Fill past hours from stats
       rawPts.forEach((pt, i) => {
         const h = utcToLocalHour(pt.start);
         if (h >= 0 && h <= 23) {
+          solarSlots[h] = solar[i]    !== undefined ? +parseFloat(solar[i]).toFixed(2) : 0;
+          consSlots[h]  = cons[i]     !== undefined ? +parseFloat(cons[i]).toFixed(2)  : 0;
+          expSlots[h]   = exp[i]      !== undefined ? +parseFloat(exp[i]).toFixed(2)   : 0;
           selfConsSlots[h] = selfCons[i] !== undefined ? Math.max(0, parseFloat(selfCons[i])||0) : 0;
           gridConsSlots[h] = gridCons[i] !== undefined ? Math.max(0, parseFloat(gridCons[i])||0) : 0;
         }
       });
 
+      // For today's current hour — overlay live entity state value
+      if (isToday) {
+        const nowHour = currentLocalHour();
+        const liveGet = (id) => {
+          if (!id || !this.hass) return null;
+          const e = this.hass.states[id];
+          return e ? Math.min(MAX_KWH_PER_HOUR, Math.max(0, parseFloat(e.state) || 0)) : null;
+        };
+        // Current hour: use live state of the today-sensor directly
+        // (it shows accumulated kWh since midnight up to now for the current hour)
+        // We show the state value itself as the current hour's bar
+        const liveSolar = liveGet(cfg.production_today_entity);
+        const liveCons  = liveGet(cfg.consumption_today_entity);
+        const liveExp   = liveGet(cfg.export_today_entity);
+
+        // Current hour slot gets the live accumulated value for this hour
+        // = today's total minus sum of all completed hours
+        const completedSolar = solarSlots.slice(0, nowHour).reduce((a,b) => a+(b||0), 0);
+        const completedCons  = consSlots.slice(0, nowHour).reduce((a,b)  => a+(b||0), 0);
+        const completedExp   = expSlots.slice(0, nowHour).reduce((a,b)   => a+(b||0), 0);
+
+        if (liveSolar !== null) solarSlots[nowHour] = +Math.min(MAX_KWH_PER_HOUR, Math.max(0, liveSolar - completedSolar)).toFixed(2);
+        if (liveCons  !== null) consSlots[nowHour]  = +Math.min(MAX_KWH_PER_HOUR, Math.max(0, liveCons  - completedCons)).toFixed(2);
+        if (liveExp   !== null) expSlots[nowHour]   = +Math.min(MAX_KWH_PER_HOUR, Math.max(0, liveExp   - completedExp)).toFixed(2);
+
+        // Hours after current remain null (no rendering)
+      }
+
       const labels = Array.from({length:25}, (_,i) => String(i).padStart(2,'0')+'h');
       return {
-        labels, r,
-        solar: localHourSlots,
-        cons:  consSlots,
-        exp:   expSlots,
+        labels, r, isToday,
+        solar: solarSlots, cons: consSlots, exp: expSlots,
         chartType: 'line', yUnit: 'kWh',
-        ...this._donutDataFromArrays(solar, selfConsSlots, cons, gridConsSlots, 'kWh'),
+        ...this._donutDataFromArrays(
+          solarSlots.slice(0,24).map(v=>v||0),
+          selfConsSlots,
+          consSlots.slice(0,24).map(v=>v||0),
+          gridConsSlots,
+          'kWh'
+        ),
       };
     }
 
@@ -516,6 +573,44 @@ class FusionSolarCard extends LitElement {
     };
   }
 
+  // ── Patch today's current hour with live entity state — no full refetch ──
+  _patchTodayLiveHour() {
+    if (!this._chart || !this._statsData || !this.hass) return;
+    const cfg = this._config;
+    const haTimeZone = (this.hass.config && this.hass.config.time_zone) || 'UTC';
+    const MAX = 6.5;
+
+    const utcToLocalHour = (isoStr) => {
+      try {
+        const fmt = new Intl.DateTimeFormat('en-US', { timeZone: haTimeZone, hour: 'numeric', hour12: false });
+        const parts = fmt.formatToParts(new Date(isoStr));
+        const h = parseInt(parts.find(p => p.type === 'hour').value, 10);
+        return h === 24 ? 0 : h;
+      } catch(e) { return new Date(isoStr).getHours(); }
+    };
+
+    const nowHour = utcToLocalHour(new Date().toISOString());
+    const liveGet = (id) => {
+      if (!id) return 0;
+      const e = this.hass.states[id];
+      return e ? Math.min(MAX, Math.max(0, parseFloat(e.state) || 0)) : 0;
+    };
+
+    const liveSolar = liveGet(cfg.production_today_entity);
+    const liveCons  = liveGet(cfg.consumption_today_entity);
+    const liveExp   = liveGet(cfg.export_today_entity);
+
+    const d = this._statsData;
+    const completedSolar = d.solar.slice(0, nowHour).reduce((a,b) => a+(b||0), 0);
+    const completedCons  = d.cons.slice(0, nowHour).reduce((a,b)  => a+(b||0), 0);
+    const completedExp   = d.exp.slice(0, nowHour).reduce((a,b)   => a+(b||0), 0);
+
+    this._chart.data.datasets[0].data[nowHour] = +Math.min(MAX, Math.max(0, liveSolar - completedSolar)).toFixed(2);
+    this._chart.data.datasets[1].data[nowHour] = +Math.min(MAX, Math.max(0, liveCons  - completedCons)).toFixed(2);
+    this._chart.data.datasets[2].data[nowHour] = +Math.min(MAX, Math.max(0, liveExp   - completedExp)).toFixed(2);
+    this._chart.update('none');
+  }
+
   // ── Chart build ───────────────────────────────────────────────────────────
   _buildChart() {
     const canvas = this.shadowRoot && this.shadowRoot.getElementById('fs-chart');
@@ -531,15 +626,18 @@ class FusionSolarCard extends LitElement {
           { label:'PV production', data:d.solar,
             borderColor:'#00e676', backgroundColor:isLine?'rgba(0,230,118,0.08)':'rgba(0,230,118,0.75)',
             fill:isLine, tension:isLine?0.4:0, pointRadius:isLine?2:0, pointBackgroundColor:'#00e676',
-            borderWidth:isLine?2:0, borderRadius:isLine?0:3 },
+            borderWidth:isLine?2:0, borderRadius:isLine?0:3,
+            spanGaps: false },
           { label:'Consumption', data:d.cons,
             borderColor:'#ff2d8f', backgroundColor:isLine?'transparent':'rgba(255,45,143,0.75)',
             fill:false, tension:isLine?0.4:0, pointRadius:isLine?2:0, pointBackgroundColor:'#ff2d8f',
-            borderWidth:isLine?2:0, borderDash:isLine?[5,3]:undefined, borderRadius:isLine?0:3 },
+            borderWidth:isLine?2:0, borderDash:isLine?[5,3]:undefined, borderRadius:isLine?0:3,
+            spanGaps: false },
           { label:'Grid export', data:d.exp,
             borderColor:'#00e5ff', backgroundColor:isLine?'rgba(0,229,255,0.07)':'rgba(0,229,255,0.75)',
             fill:isLine, tension:isLine?0.4:0, pointRadius:isLine?2:0, pointBackgroundColor:'#00e5ff',
-            borderWidth:isLine?2:0, borderRadius:isLine?0:3 },
+            borderWidth:isLine?2:0, borderRadius:isLine?0:3,
+            spanGaps: false },
         ],
       },
       options: {
