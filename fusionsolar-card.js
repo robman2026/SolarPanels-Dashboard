@@ -19,7 +19,7 @@
  *       Self-Consumption Ratios · Diagnostics
  */
 
-const CARD_VERSION = '1.4.0';
+const CARD_VERSION = '1.5.0';
 
 // ── LitElement bootstrap (same pattern as all robman2026 cards) ──────────────
 const LitElement = Object.getPrototypeOf(customElements.get('ha-panel-lovelace'));
@@ -317,29 +317,29 @@ class FusionSolarCard extends LitElement {
   // ── Process recorder statistics into chart + donut data ───────────────────
   _processStats(result, r, start, end, cfg) {
 
-    // For accumulating energy sensors (kWh totals that reset daily like FusionSolar),
-    // we MUST use state values and compute per-hour/day/month deltas ourselves.
-    // Using 'change' directly is unreliable because daily-reset sensors have negative
-    // changes at midnight and wildly wrong values for past periods.
+    // FusionSolar energy sensors are stored as 'sum' type in HA long-term statistics.
+    // The 'sum' field is a running cumulative total since statistics started.
+    // We compute per-period energy by taking the DIFFERENCE between consecutive sum values.
+    // This is correct and consistent regardless of whether the daily sensor resets at midnight.
     const getDeltas = (entityId) => {
       if (!entityId || !result[entityId]) return [];
       const pts = result[entityId];
       if (!pts.length) return [];
 
-      // Use 'state' if available, else fall back to 'sum'
+      // Prefer 'sum' (long-term stats cumulative), fall back to 'state', then 'change'
       const val = (pt) => {
-        const v = pt.state ?? pt.sum ?? pt.change ?? 0;
+        const v = pt.sum ?? pt.state ?? pt.change ?? 0;
         return parseFloat(v) || 0;
       };
 
       const deltas = [];
       for (let i = 0; i < pts.length; i++) {
         if (i === 0) {
-          // First point: use change if available and positive, else 0
-          const c = pts[i].change ?? 0;
-          deltas.push(Math.max(0, parseFloat(c) || 0));
+          // First bucket: use change if positive, else 0 — can't compute delta without prior point
+          const c = parseFloat(pts[i].change ?? 0) || 0;
+          deltas.push(Math.max(0, c));
         } else {
-          // Delta between consecutive states — always non-negative
+          // Delta = sum[i] - sum[i-1] — always positive for accumulating sensors
           const delta = val(pts[i]) - val(pts[i-1]);
           deltas.push(Math.max(0, delta));
         }
@@ -356,8 +356,9 @@ class FusionSolarCard extends LitElement {
     // Build labels aligned to actual stat timestamps
     // HA returns one entry per period bucket — align by index to expected buckets
     if (r === 'day') {
-      // 24 hourly buckets: label as 01h…24h (end of each hour)
-      const labels = Array.from({length:24}, (_,i) => String(i+1).padStart(2,'0')+'h');
+      // HA hourly buckets are labelled by start of hour: 00:00, 01:00 ... 23:00
+      // We label them 00h–23h. The chart shows all 24 hours of the day.
+      const labels = Array.from({length:24}, (_,i) => String(i).padStart(2,'0')+'h');
       const pad = (arr) => {
         const a = [...arr];
         while (a.length < 24) a.push(0);
@@ -493,7 +494,7 @@ class FusionSolarCard extends LitElement {
           },
         },
         scales:{
-          x:{ grid:{color:'rgba(255,255,255,0.05)'}, ticks:{font:{size:9},color:'#5a7090',maxRotation:0,maxTicksLimit:12} },
+          x:{ grid:{color:'rgba(255,255,255,0.05)'}, ticks:{font:{size:9},color:'#5a7090',maxRotation:0, maxTicksLimit: this._statsData && this._statsData.r === 'day' ? 24 : 12} },
           y:{ grid:{color:'rgba(255,255,255,0.05)'}, ticks:{font:{size:9},color:'#5a7090',callback:v=>v+d.yUnit} },
         },
       },
@@ -616,9 +617,8 @@ class FusionSolarCard extends LitElement {
               <text x="344" y="256" font-size="9" fill="#f97316" opacity="${grid > 0.05 ? '0.7' : '0.15'}" font-family="DM Mono,monospace" text-anchor="middle">${grid.toFixed(2)} kW</text>
 
               <!-- ══ NODE: SUN (top center, 260,74) ══ -->
-              <g transform="translate(260,74)">
-                <!-- Static node circle with conditional pulse glow -->
-                <circle class="fs-glow-sol ${solar > 0 ? 'fs-pulse-sun' : ''}" r="37" fill="rgba(245,158,11,0.10)" stroke="#f59e0b" stroke-width="1.8"/>
+              <g transform="translate(260,74)" style="${solar > 0 ? 'filter:drop-shadow(0 0 8px #f59e0b)' : 'opacity:0.7'}">
+                <circle r="37" fill="rgba(245,158,11,0.12)"/>
                 <!-- Sun disc -->
                 <circle r="14" fill="#f59e0b" opacity="0.85"/>
                 <!-- Rays -->
@@ -636,8 +636,8 @@ class FusionSolarCard extends LitElement {
               </g>
 
               <!-- ══ NODE: PV PANELS (mid-left, 96,268) ══ -->
-              <g transform="translate(96,268)">
-                <circle class="fs-glow-pv ${solar > 0 ? 'fs-pulse-pv' : ''}" r="39" fill="rgba(34,197,94,0.08)" stroke="#22c55e" stroke-width="1.8"/>
+              <g transform="translate(96,268)" class="${solar > 0 ? 'fs-pulse-pv' : ''}" style="${solar <= 0 ? 'opacity:0.5' : ''}">
+                <circle r="39" fill="rgba(34,197,94,0.10)"/>
                 <!-- Panel cells 2×3 -->
                 <g fill="rgba(34,197,94,0.20)" stroke="#22c55e" stroke-width="0.9">
                   <rect x="-22" y="-15" width="13" height="9" rx="1.5"/>
@@ -660,23 +660,23 @@ class FusionSolarCard extends LitElement {
                 <text y="54" text-anchor="middle" font-size="9" fill="#22c55e" opacity="0.65" font-family="DM Sans,sans-serif" font-weight="600" letter-spacing="0.08em">PV PANELS</text>
               </g>
 
-              <!-- ══ NODE: HOUSE (center, 260,258) — STATIC, no ring, no glow ══ -->
+              <!-- ══ NODE: HOUSE (center, 260,258) — STATIC, no glow ══ -->
               <g transform="translate(260,258)">
-                <circle r="40" fill="rgba(255,45,143,0.07)" stroke="#ff2d8f" stroke-width="2"/>
+                <circle r="40" fill="rgba(255,45,143,0.10)"/>
                 <!-- Roof -->
-                <polygon points="0,-22 -20,-2 20,-2" fill="#ff2d8f" opacity="0.45"/>
+                <polygon points="0,-22 -20,-2 20,-2" fill="#ff2d8f" opacity="0.55"/>
                 <!-- Chimney -->
-                <rect x="9" y="-26" width="6" height="9" rx="1" fill="#ff2d8f" opacity="0.38"/>
+                <rect x="9" y="-26" width="6" height="9" rx="1" fill="#ff2d8f" opacity="0.45"/>
                 <!-- Walls -->
-                <rect x="-16" y="-2" width="32" height="22" rx="2" fill="#ff2d8f" opacity="0.18"/>
+                <rect x="-16" y="-2" width="32" height="22" rx="2" fill="#ff2d8f" opacity="0.25"/>
                 <!-- Door -->
-                <rect x="-5" y="9" width="10" height="11" rx="1.5" fill="#ff2d8f" opacity="0.5"/>
+                <rect x="-5" y="9" width="10" height="11" rx="1.5" fill="#ff2d8f" opacity="0.6"/>
                 <!-- Left window -->
-                <rect x="-14" y="1" width="8" height="7" rx="1.5" fill="#ff2d8f" opacity="0.42"/>
+                <rect x="-14" y="1" width="8" height="7" rx="1.5" fill="#ff2d8f" opacity="0.5"/>
                 <line x1="-10" y1="1"   x2="-10" y2="8"    stroke="#ff2d8f" stroke-width="0.8" opacity="0.6"/>
                 <line x1="-14" y1="4.5" x2="-6"  y2="4.5"  stroke="#ff2d8f" stroke-width="0.8" opacity="0.6"/>
                 <!-- Right window -->
-                <rect x="6"   y="1" width="8" height="7" rx="1.5" fill="#ff2d8f" opacity="0.42"/>
+                <rect x="6"   y="1" width="8" height="7" rx="1.5" fill="#ff2d8f" opacity="0.5"/>
                 <line x1="10"  y1="1"   x2="10"  y2="8"    stroke="#ff2d8f" stroke-width="0.8" opacity="0.6"/>
                 <line x1="6"   y1="4.5" x2="14"  y2="4.5"  stroke="#ff2d8f" stroke-width="0.8" opacity="0.6"/>
                 <!-- kW value above node -->
@@ -686,10 +686,10 @@ class FusionSolarCard extends LitElement {
               </g>
 
               <!-- ══ NODE: INVERTER (small, below house, 260,350) ══ -->
-              <g transform="translate(260,350)">
-                <circle class="fs-glow-inv ${solar > 0 ? 'fs-pulse-inv' : ''}" r="24" fill="rgba(0,245,255,0.08)" stroke="#00f5ff" stroke-width="1.5"/>
+              <g transform="translate(260,350)" class="${solar > 0 ? 'fs-pulse-inv' : ''}" style="${solar <= 0 ? 'opacity:0.5' : ''}">
+                <circle r="24" fill="rgba(0,245,255,0.10)"/>
                 <!-- Box with sine wave -->
-                <rect x="-13" y="-10" width="26" height="18" rx="3" fill="rgba(0,245,255,0.12)" stroke="#00f5ff" stroke-width="0.9"/>
+                <rect x="-13" y="-10" width="26" height="18" rx="3" fill="rgba(0,245,255,0.14)" stroke="#00f5ff" stroke-width="0.9"/>
                 <path d="M-9,-1 Q-6,-7 -3,-1 Q0,5 3,-1 Q6,-7 9,-1" stroke="#00f5ff" stroke-width="1.3" fill="none" stroke-linecap="round" opacity="0.95"/>
                 <text x="-12" y="-5" font-size="4.5" fill="#00f5ff" opacity="0.5" font-family="DM Mono,monospace">DC</text>
                 <text x="7"   y="7"  font-size="4.5" fill="#00f5ff" opacity="0.5" font-family="DM Mono,monospace">AC</text>
@@ -697,8 +697,8 @@ class FusionSolarCard extends LitElement {
               </g>
 
               <!-- ══ NODE: GRID (mid-right, 424,268) ══ -->
-              <g transform="translate(424,268)">
-                <circle class="fs-glow-grid ${grid > 0.05 ? 'fs-pulse-grid' : ''}" r="37" fill="rgba(249,115,22,0.07)" stroke="#f97316" stroke-width="1.6"/>
+              <g transform="translate(424,268)" class="${grid > 0.05 ? 'fs-pulse-grid' : ''}" style="${grid <= 0.05 ? 'opacity:0.5' : ''}">
+                <circle r="37" fill="rgba(249,115,22,0.10)"/>
                 <!-- Pylon -->
                 <line x1="0"   y1="-22" x2="0"   y2="18"  stroke="#f97316" stroke-width="1.8" stroke-linecap="round" opacity="0.8"/>
                 <line x1="-17" y1="-8"  x2="17"  y2="-8"  stroke="#f97316" stroke-width="1.6" stroke-linecap="round" opacity="0.8"/>
@@ -1197,22 +1197,17 @@ class FusionSolarCard extends LitElement {
       .fp-idle { animation:none !important; opacity:0.07 !important; }
       @keyframes fsdash { to { stroke-dashoffset:-22; } }
 
-      /* ── Node border pulse — glow animates ON the node border circle itself ── */
-      @keyframes fsPulseSun  { 0%,100%{filter:drop-shadow(0 0 5px #f59e0b) drop-shadow(0 0 12px #f59e0b);} 50%{filter:drop-shadow(0 0 2px #f59e0b);} }
-      @keyframes fsPulsePV   { 0%,100%{filter:drop-shadow(0 0 6px #22c55e) drop-shadow(0 0 14px #22c55e);} 50%{filter:drop-shadow(0 0 2px #22c55e);} }
-      @keyframes fsPulseInv  { 0%,100%{filter:drop-shadow(0 0 6px #00f5ff) drop-shadow(0 0 14px #00f5ff);} 50%{filter:drop-shadow(0 0 2px #00f5ff);} }
-      @keyframes fsPulseGrid { 0%,100%{filter:drop-shadow(0 0 6px #f97316) drop-shadow(0 0 14px #f97316);} 50%{filter:drop-shadow(0 0 2px #f97316);} }
+      /* ── Node pulse glow — applied to <g> group, animates drop-shadow on icon content ── */
+      /* No stroke circle on nodes = no visible ring. Glow is purely the icon content glowing. */
+      @keyframes fsPulseSun  { 0%,100%{filter:drop-shadow(0 0 8px #f59e0b) drop-shadow(0 0 18px rgba(245,158,11,0.4));} 50%{filter:drop-shadow(0 0 2px #f59e0b);} }
+      @keyframes fsPulsePV   { 0%,100%{filter:drop-shadow(0 0 8px #22c55e) drop-shadow(0 0 18px rgba(34,197,94,0.4));}  50%{filter:drop-shadow(0 0 2px #22c55e);} }
+      @keyframes fsPulseInv  { 0%,100%{filter:drop-shadow(0 0 8px #00f5ff) drop-shadow(0 0 18px rgba(0,245,255,0.4));} 50%{filter:drop-shadow(0 0 2px #00f5ff);} }
+      @keyframes fsPulseGrid { 0%,100%{filter:drop-shadow(0 0 8px #f97316) drop-shadow(0 0 18px rgba(249,115,22,0.4));} 50%{filter:drop-shadow(0 0 2px #f97316);} }
 
       .fs-pulse-sun  { animation:fsPulseSun  2s   ease-in-out infinite; }
       .fs-pulse-pv   { animation:fsPulsePV   2.4s ease-in-out infinite; }
       .fs-pulse-inv  { animation:fsPulseInv  1.9s ease-in-out infinite; }
       .fs-pulse-grid { animation:fsPulseGrid 2.7s ease-in-out infinite; }
-
-      /* Static node border soft glow (when inactive) */
-      .fs-glow-sol  { filter:drop-shadow(0 0 3px #f59e0b); }
-      .fs-glow-pv   { filter:drop-shadow(0 0 3px #22c55e); }
-      .fs-glow-inv  { filter:drop-shadow(0 0 3px #00f5ff); }
-      .fs-glow-grid { filter:drop-shadow(0 0 3px #f97316); }
 
       /* ── Arc gauges ── */
       .fs-gauges { display:grid; grid-template-columns:repeat(4,1fr); gap:7px; margin-top:1rem; }
