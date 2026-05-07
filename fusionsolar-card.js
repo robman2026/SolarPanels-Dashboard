@@ -19,7 +19,7 @@
  *       Self-Consumption Ratios · Diagnostics
  */
 
-const CARD_VERSION = '1.8.0';
+const CARD_VERSION = '1.9.0';
 
 // ── LitElement bootstrap (same pattern as all robman2026 cards) ──────────────
 const LitElement = Object.getPrototypeOf(customElements.get('ha-panel-lovelace'));
@@ -217,28 +217,60 @@ class FusionSolarCard extends LitElement {
 
   // ── Date range for statistics query ───────────────────────────────────────
   _getDateRange() {
-    const now   = new Date();
-    const r     = this._range;
-    const o     = this._offset;
+    const now = new Date();
+    const r   = this._range;
+    const o   = this._offset;
     let start, end;
 
     if (r === 'day') {
-      // We need to request the full local day in HA's timezone.
-      // Strategy: always request a 28-hour UTC window centred on the local date.
-      // This covers UTC+14 to UTC-12 (all possible offsets) with room to spare.
-      // The slot-placement logic in _processStats handles mapping to correct hours.
-      const localDate = new Date(now);
-      localDate.setDate(localDate.getDate() + o);
-      // Use midnight UTC of the requested day minus 14h (covers UTC+14)
-      // to midnight UTC of next day plus 14h (covers UTC-14)
-      start = new Date(Date.UTC(
-        localDate.getFullYear(), localDate.getMonth(), localDate.getDate(),
-        0, 0, 0, 0
-      ) - 14 * 3600000); // 14h before UTC midnight
-      end = new Date(Date.UTC(
-        localDate.getFullYear(), localDate.getMonth(), localDate.getDate(),
-        23, 59, 59, 999
-      ) + 14 * 3600000); // 14h after UTC end-of-day
+      // Compute the exact UTC timestamps for local midnight and local 23:59:59
+      // in HA's configured timezone, so we fetch precisely one local day — no
+      // ±14h blind window that causes adjacent-day buckets to bleed in.
+      const haTimeZone = (this.hass && this.hass.config && this.hass.config.time_zone) || 'UTC';
+
+      // Build the local date string for the requested day in HA timezone
+      const localFmt = new Intl.DateTimeFormat('en-CA', {
+        timeZone: haTimeZone,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+      });
+      const todayLocal = localFmt.format(now); // "YYYY-MM-DD"
+      // Apply offset by shifting date string
+      const baseDate = new Date(todayLocal + 'T00:00:00'); // local midnight (browser)
+      baseDate.setDate(baseDate.getDate() + o);
+      const reqLocal = localFmt.format(baseDate);
+
+      // Convert "YYYY-MM-DD 00:00:00" in haTimeZone to UTC
+      // We do this by constructing an Intl formatter and reversing it:
+      // create a Date that represents local midnight in haTimeZone
+      const localMidnight = new Date(`${reqLocal}T00:00:00`);
+      // Get offset between haTimeZone midnight and UTC
+      const tzOffsetMs = localMidnight.getTime() -
+        new Date(new Date(`${reqLocal}T00:00:00`).toLocaleString('en-US', { timeZone: haTimeZone })).getTime() +
+        new Date(`${reqLocal}T00:00:00`).getTime() -
+        new Date(new Date(`${reqLocal}T00:00:00`).toLocaleString('en-US', { timeZone: 'UTC' })).getTime();
+
+      // Simpler and reliable: use the offset approach via toLocaleString
+      const haOffset = (() => {
+        try {
+          // Get what time it is in haTimeZone when UTC is epoch
+          // Use a known fixed time to compute offset
+          const testDate = new Date(`${reqLocal}T12:00:00Z`); // noon UTC
+          const localStr = testDate.toLocaleString('en-US', {
+            timeZone: haTimeZone,
+            hour: 'numeric', hour12: false,
+          });
+          const localHour = parseInt(localStr, 10);
+          return localHour - 12; // offset in hours (e.g. +3 for Bucharest EEST)
+        } catch(e) { return 0; }
+      })();
+
+      // Local midnight in UTC = midnight minus offset
+      const midnightUTC = new Date(`${reqLocal}T00:00:00Z`);
+      midnightUTC.setHours(midnightUTC.getHours() - haOffset);
+      start = midnightUTC;
+      // Local 23:59:59 in UTC
+      end = new Date(start.getTime() + 24 * 3600000 - 1);
+
     } else if (r === 'month') {
       start = new Date(now.getFullYear(), now.getMonth() + o, 1, 0, 0, 0, 0);
       end   = new Date(now.getFullYear(), now.getMonth() + o + 1, 0, 23, 59, 59, 999);
@@ -247,7 +279,6 @@ class FusionSolarCard extends LitElement {
       start = new Date(y, 0, 1, 0, 0, 0, 0);
       end   = new Date(y, 11, 31, 23, 59, 59, 999);
     } else {
-      // lifetime — from 2000 to now
       start = new Date(2000, 0, 1);
       end   = new Date();
     }
@@ -436,8 +467,25 @@ class FusionSolarCard extends LitElement {
       consSlots[24]  = 0;
       expSlots[24]   = 0;
 
-      // Fill past hours from stats
+      // Fill past hours from stats — only accept buckets that belong to the requested local date
+      const reqLocalDate = (() => {
+        try {
+          const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: haTimeZone, year:'numeric', month:'2-digit', day:'2-digit' });
+          const base = new Date();
+          base.setDate(base.getDate() + this._offset);
+          return fmt.format(base); // "YYYY-MM-DD"
+        } catch(e) { return null; }
+      })();
+
       rawPts.forEach((pt, i) => {
+        // Verify this bucket belongs to the requested local date
+        if (reqLocalDate) {
+          try {
+            const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: haTimeZone, year:'numeric', month:'2-digit', day:'2-digit' });
+            const bucketDate = fmt.format(new Date(pt.start));
+            if (bucketDate !== reqLocalDate) return; // skip buckets from adjacent days
+          } catch(e) {}
+        }
         const h = utcToLocalHour(pt.start);
         if (h >= 0 && h <= 23) {
           solarSlots[h] = solar[i]    !== undefined ? +parseFloat(solar[i]).toFixed(2) : 0;
