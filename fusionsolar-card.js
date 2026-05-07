@@ -356,13 +356,13 @@ class FusionSolarCard extends LitElement {
     // Build labels aligned to actual stat timestamps
     // HA returns one entry per period bucket — align by index to expected buckets
     if (r === 'day') {
-      // HA hourly buckets are labelled by start of hour: 00:00, 01:00 ... 23:00
-      // We label them 00h–23h. The chart shows all 24 hours of the day.
-      const labels = Array.from({length:24}, (_,i) => String(i).padStart(2,'0')+'h');
+      // 25 labels: 00h through 24h — HA gives 24 hourly buckets (00:00–23:00),
+      // we append a 24h label with value 0 so the x-axis always reads 00h to 24h.
+      const labels = Array.from({length:25}, (_,i) => String(i).padStart(2,'0')+'h');
       const pad = (arr) => {
         const a = [...arr];
         while (a.length < 24) a.push(0);
-        return a.slice(0, 24).map(v => +parseFloat(v).toFixed(2));
+        return [...a.slice(0, 24).map(v => +parseFloat(v).toFixed(2)), 0]; // 25th point = 0
       };
       return {
         labels, r,
@@ -494,8 +494,13 @@ class FusionSolarCard extends LitElement {
           },
         },
         scales:{
-          x:{ grid:{color:'rgba(255,255,255,0.05)'}, ticks:{font:{size:9},color:'#5a7090',maxRotation:0, maxTicksLimit: this._statsData && this._statsData.r === 'day' ? 24 : 12} },
-          y:{ grid:{color:'rgba(255,255,255,0.05)'}, ticks:{font:{size:9},color:'#5a7090',callback:v=>v+d.yUnit} },
+          x:{ grid:{color:'rgba(255,255,255,0.05)'}, ticks:{font:{size:9},color:'#5a7090',maxRotation:0, maxTicksLimit: this._statsData && this._statsData.r === 'day' ? 25 : 12} },
+          y:{ grid:{color:'rgba(255,255,255,0.05)'},
+              min: 0,
+              max: d.r === 'day' ? 6 : undefined,
+              ticks:{font:{size:9},color:'#5a7090',
+                stepSize: d.r === 'day' ? 1 : undefined,
+                callback:v=>v+d.yUnit} },
         },
       },
     });
