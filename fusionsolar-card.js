@@ -19,7 +19,7 @@
  *       Self-Consumption Ratios · Diagnostics
  */
 
-const CARD_VERSION = '1.9.0';
+const CARD_VERSION = '1.10.0';
 
 // ── LitElement bootstrap (same pattern as all robman2026 cards) ──────────────
 const LitElement = Object.getPrototypeOf(customElements.get('ha-panel-lovelace'));
@@ -1546,6 +1546,15 @@ class FusionSolarCard extends LitElement {
         .fs-gauges  { grid-template-columns: repeat(2,1fr); }
         .fs-flow    { height:340px; }
         .det-grid   { grid-template-columns: 1fr; }
+      }
+
+      /* ── Just HA Dashboard design adoption ──────────────────────────────
+         Gated on --user-* tokens (defined only by the Just HA theme). Falls
+         back to the card's original look on every other dashboard/theme. */
+      .fs-card {
+        background: var(--user-glow-amber, transparent), var(--user-ink-750, rgba(4,10,24,0.82)) !important;
+        border: 1px solid var(--user-line, rgba(0,245,255,0.14)) !important;
+        border-radius: var(--user-radius-lg, 20px) !important;
       }
     `;
   }
