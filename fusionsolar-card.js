@@ -789,7 +789,7 @@ class FusionSolarCard extends LitElement {
 
     return html`
       <ha-card>
-        <div class="fs-card">
+        <div class="fs-card${this._config.jha ? ' fs-jha' : ''}">
 
           <!-- ── Header ── -->
           <div class="fs-header">
@@ -1551,9 +1551,9 @@ class FusionSolarCard extends LitElement {
       /* ── Just HA Dashboard design adoption ──────────────────────────────
          Gated on --user-* tokens (defined only by the Just HA theme). Falls
          back to the card's original look on every other dashboard/theme. */
-      .fs-card {
-        background: var(--user-glow-amber, transparent), var(--user-ink-750, rgba(4,10,24,0.82)) !important;
-        border: 1px solid var(--user-line, rgba(0,245,255,0.14)) !important;
+      .fs-card.fs-jha {
+        background: var(--user-glow-amber, radial-gradient(120% 130% at 50% -10%, rgba(224,162,78,.30) 0%, rgba(160,104,43,.10) 38%, rgba(20,20,23,0) 72%)), var(--user-ink-750, #141417) !important;
+        border: 1px solid var(--user-line, rgba(255,255,255,.09)) !important;
         border-radius: var(--user-radius-lg, 20px) !important;
       }
     `;
@@ -1643,6 +1643,7 @@ class FusionSolarCardEditor extends LitElement {
       ${this._section('header', '☀️ Header', html`
         ${this._txt('Card Title',    c.card_title,    v=>this._set('card_title',v),    'SUN2000 · FusionSolar')}
         ${this._txt('Card Subtitle', c.card_subtitle, v=>this._set('card_subtitle',v), 'Huawei inverter · Home Assistant')}
+        ${this._toggle('✨ Just HA Design', c.jha, v=>this._set('jha',v))}
       `)}
 
       ${this._section('flow', '⚡ Flow Diagram & Chart', html`
